@@ -180,12 +180,17 @@ document.getElementById('div_pageContainer').addEventListener('click', function 
     if (id === null) { return }
     jeedomUtils.showAlert({ message: '{{Test en cours...}}', level: 'info', timeOut: 2000 })
     dahuaAjax('testConnection', { id: id }, function (result) {
-      jeedomUtils.showAlert({
-        message: '{{Connexion réussie}} : ' + result.type + ' — ' + result.version
-          + ' (' + result.channels + ' {{canaux}})',
-        level: 'success',
-        timeOut: 8000
-      })
+      var message = '{{Connexion réussie}} : ' + result.type + ' — ' + result.version
+                  + ' (' + result.channels + ' {{canaux}})'
+      /* Beaucoup de NVR n'ont ni sortie d'alarme ni relais de caméra. Le dire ici
+         évite de chercher pourquoi les commandes correspondantes échouent. */
+      var capacites = []
+      if (result.alarmOut) { capacites.push('{{sortie d\'alarme}}') }
+      if (result.coaxial)  { capacites.push('{{éclairage / sirène}}') }
+      message += capacites.length
+        ? '<br>{{Sorties détectées}} : ' + capacites.join(', ')
+        : '<br>{{Aucune sortie d\'alarme ni relais détecté sur ce matériel.}}'
+      jeedomUtils.showAlert({ message: message, level: 'success', timeOut: 12000 })
       dahuaRefreshDaemonStatus(id)
     }, { button: target })
     return

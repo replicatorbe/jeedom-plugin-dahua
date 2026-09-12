@@ -166,7 +166,11 @@
         "Démon : aucune information": "Daemon: no information",
         "Connecté": "Connected",
         "Déconnecté": "Disconnected",
-        "Nom": "Name"
+        "Nom": "Name",
+        "sortie d\\'alarme": "alarm output",
+        "éclairage / sirène": "light / siren",
+        "Sorties détectées": "Detected outputs",
+        "Aucune sortie d\\'alarme ni relais détecté sur ce matériel.": "No alarm output or relay detected on this hardware."
     },
     "plugins/dahua/plugin_info/configuration.php": {
         "Démon": "Daemon",
