@@ -1,9 +1,10 @@
 {
     "id": "dahua",
     "name": "Dahua NVR",
+    "pluginVersion": "0.3",
     "description": "Réception en temps réel des événements d'un NVR ou d'une caméra Dahua via le protocole DHIP : détection de mouvement, détection intelligente (humain, véhicule), franchissement de ligne, perte vidéo, contrôle PTZ et capture d'images.",
     "licence": "AGPL",
-    "author": "replicatorbe",
+    "author": "sMug (Jérôme Fafchamps)",
     "require": "4.4",
     "requireOsVersion": "11",
     "category": "security",
@@ -15,6 +16,14 @@
     "issue": "https://github.com/replicatorbe/jeedom-plugin-dahua/issues",
     "documentation": "https://github.com/replicatorbe/jeedom-plugin-dahua/blob/main/docs/#language#/index.md",
     "changelog": "https://github.com/replicatorbe/jeedom-plugin-dahua/blob/main/docs/#language#/changelog.md",
-    "language": ["fr_FR", "en_US"],
-    "compatibility": ["smart", "rpi", "docker", "diy"]
+    "language": [
+        "fr_FR",
+        "en_US"
+    ],
+    "compatibility": [
+        "smart",
+        "rpi",
+        "docker",
+        "diy"
+    ]
 }

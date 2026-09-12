@@ -173,7 +173,7 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 						<div class="form-group">
 							<label class="col-sm-3 control-label">{{Adresse IP}}</label>
 							<div class="col-sm-3">
-								<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="ip" placeholder="192.168.0.176">
+								<input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="ip" placeholder="192.168.1.108">
 							</div>
 							<label class="col-sm-1 control-label">{{Port}}</label>
 							<div class="col-sm-2">
