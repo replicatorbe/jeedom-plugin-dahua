@@ -1118,8 +1118,15 @@ class DahuaDaemon {
 
     private function drainPushQueue() {
         if ($this->pushPid > 0) {
-            if (pcntl_waitpid($this->pushPid, $status, WNOHANG) <= 0) {
-                return;                                  // un envoi est déjà en cours
+            /*
+             * 0  : le fils tourne encore, on attend.
+             * >0 : il vient de se terminer.
+             * -1 : il n'existe plus — reapChildren() l'a déjà récolté. Traiter ce
+             *      cas comme « terminé » est indispensable : sinon pushPid reste
+             *      positionné à jamais et la file n'est plus jamais vidée.
+             */
+            if (pcntl_waitpid($this->pushPid, $status, WNOHANG) === 0) {
+                return;
             }
             $this->pushPid = 0;
         }
