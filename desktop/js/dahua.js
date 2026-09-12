@@ -36,6 +36,7 @@ function printEqLogic(_eqLogic) {
   /* Le type reste modifiable : changer NVR <-> caméra recalcule le logicalId et
      supprime les commandes de l'ancien type. On avertit simplement l'utilisateur. */
   var isSaved = (isset(_eqLogic) && isset(_eqLogic.id) && _eqLogic.id != '')
+  var typeSelect = document.getElementById('sel_dahuaType')
   var frozen = document.getElementById('span_dahuaTypeFrozen')
   if (frozen !== null) {
     frozen.style.display = isSaved ? '' : 'none'
@@ -52,7 +53,7 @@ function printEqLogic(_eqLogic) {
   if (badge !== null) {
     badge.style.display = 'none'
     badge.innerHTML = ''
-    if (isSaved && select !== null && select.value !== 'camera') {
+    if (isSaved && typeSelect !== null && typeSelect.value !== 'camera') {
       dahuaRefreshDaemonStatus(_eqLogic.id)
     }
   }
@@ -162,14 +163,17 @@ function dahuaRefreshDaemonStatus(_id) {
 }
 
 /* Les écouteurs sont posés à la racine du script : les pages sont chargées en
-   AJAX par jeedomUtils.loadPage, l'évènement DOMContentLoaded a déjà eu lieu. */
-document.getElementById('div_pageContainer').addEventListener('change', function (event) {
+   AJAX par jeedomUtils.loadPage, l'évènement DOMContentLoaded a déjà eu lieu.
+   La garde évite qu'une absence du conteneur ne casse tout le fichier. */
+var dahuaContainer = document.getElementById('div_pageContainer') || document.body
+
+dahuaContainer.addEventListener('change', function (event) {
   if (event.target.closest('#sel_dahuaType')) {
     dahuaToggleType()
   }
 })
 
-document.getElementById('div_pageContainer').addEventListener('click', function (event) {
+dahuaContainer.addEventListener('click', function (event) {
   var target = null
 
   /* --- Test de connexion au NVR --- */
