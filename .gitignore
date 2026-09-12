@@ -1,3 +1,6 @@
-data/
+# Captures produites à l'exécution
+data/snapshots/
+
+# Journaux et fichiers de processus
 *.log
 *.pid
