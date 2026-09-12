@@ -23,7 +23,6 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 				<span>{{Configuration}}</span>
 			</div>
 		</div>
-		<legend><i class="fas fa-video"></i> {{Mes équipements Dahua}}</legend>
 		<?php
 		echo '<div class="input-group" style="margin:5px;">';
 		echo '<input class="form-control roundedLeft" placeholder="{{Rechercher}}" id="in_searchEqlogic">';
@@ -32,18 +31,58 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 		echo '<a class="btn roundedRight hidden" id="bt_pluginDisplayAsTable" data-coreSupport="1" data-state="0"><i class="fas fa-grip-lines"></i></a>';
 		echo '</div>';
 		echo '</div>';
-		echo '<div class="eqLogicThumbnailContainer">';
-		foreach ($eqLogics as $eqLogic) {
-			$opacity = ($eqLogic->getIsEnable()) ? '' : 'disableCard';
-			$icon = ($eqLogic->getConfiguration('type') == dahua::TYPE_NVR) ? 'fa-server' : 'fa-video';
-			echo '<div class="eqLogicDisplayCard cursor ' . $opacity . '" data-eqLogic_id="' . $eqLogic->getId() . '">';
-			echo '<i class="fas ' . $icon . '" style="font-size:4em;"></i>';
+
+		// Aide affichée tant qu'aucun équipement n'existe (installation neuve).
+		if (count($eqLogics) == 0) {
+			echo '<div class="alert alert-info" style="margin:5px;">';
+			echo '<b>{{Aucun équipement pour le moment. Pour démarrer :}}</b>';
+			echo '<ol style="margin:5px 0 0 0;padding-left:20px;">';
+			echo '<li>{{Cliquez sur « Ajouter un NVR » et donnez-lui un nom.}}</li>';
+			echo '<li>{{Renseignez son adresse IP, ses ports et ses identifiants.}}</li>';
+			echo '<li>{{Enregistrez l\'équipement, puis cliquez sur « Tester la connexion ».}}</li>';
+			echo '<li>{{Cliquez enfin sur « Découvrir les caméras » : un équipement est créé pour chaque canal du NVR.}}</li>';
+			echo '</ol>';
+			echo '</div>';
+		}
+
+		// Affichage d'une vignette d'équipement.
+		$displayCard = function ($_eqLogic, $_icon) {
+			$opacity = ($_eqLogic->getIsEnable()) ? '' : 'disableCard';
+			echo '<div class="eqLogicDisplayCard cursor ' . $opacity . '" data-eqLogic_id="' . $_eqLogic->getId() . '">';
+			echo '<i class="fas ' . $_icon . '" style="font-size:4em;"></i>';
 			echo '<br>';
-			echo '<span class="name">' . $eqLogic->getHumanName(true, true) . '</span>';
+			echo '<span class="name">' . $_eqLogic->getHumanName(true, true) . '</span>';
 			echo '<span class="hiddenAsCard displayTableRight hidden">';
-			echo ($eqLogic->getIsVisible() == 1) ? '<i class="fas fa-eye" title="{{Equipement visible}}"></i>' : '<i class="fas fa-eye-slash" title="{{Equipement non visible}}"></i>';
+			echo ($_eqLogic->getIsVisible() == 1) ? '<i class="fas fa-eye" title="{{Equipement visible}}"></i>' : '<i class="fas fa-eye-slash" title="{{Equipement non visible}}"></i>';
 			echo '</span>';
 			echo '</div>';
+		};
+
+		// Les NVR portent la connexion, les caméras en sont les canaux : deux listes distinctes.
+		$nvrEqLogics = array();
+		$cameraEqLogics = array();
+		foreach ($eqLogics as $eqLogic) {
+			if ($eqLogic->getConfiguration('type') == dahua::TYPE_CAMERA) {
+				$cameraEqLogics[] = $eqLogic;
+			} else {
+				$nvrEqLogics[] = $eqLogic;
+			}
+		}
+
+		echo '<legend><i class="fas fa-server"></i> {{NVR}}</legend>';
+		echo '<div class="eqLogicThumbnailContainer">';
+		foreach ($nvrEqLogics as $eqLogic) {
+			$displayCard($eqLogic, 'fa-server');
+		}
+		echo '</div>';
+
+		echo '<legend><i class="fas fa-video"></i> {{Caméras}}</legend>';
+		if (count($cameraEqLogics) == 0 && count($nvrEqLogics) > 0) {
+			echo '<div class="alert alert-info" style="margin:5px;">{{Aucune caméra. Ouvrez un NVR puis cliquez sur « Découvrir les caméras ».}}</div>';
+		}
+		echo '<div class="eqLogicThumbnailContainer">';
+		foreach ($cameraEqLogics as $eqLogic) {
+			$displayCard($eqLogic, 'fa-video');
 		}
 		echo '</div>';
 		?>
@@ -123,6 +162,7 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 							</div>
 							<div class="col-sm-5">
 								<span class="help-block" style="margin:0;">{{Le NVR porte la connexion ; chaque caméra correspond à un de ses canaux.}}</span>
+								<span class="help-block" id="span_dahuaTypeFrozen" style="margin:0;display:none;"><i class="fas fa-exclamation-triangle"></i> {{Changer le type supprimera les commandes propres à l'ancien type.}}</span>
 							</div>
 						</div>
 					</fieldset>
@@ -137,7 +177,29 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 							</div>
 							<label class="col-sm-1 control-label">{{Port}}</label>
 							<div class="col-sm-2">
-								<input type="number" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="port" placeholder="80">
+								<input type="number" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="port" placeholder="80" title="{{Port DHIP}}">
+							</div>
+						</div>
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Port HTTP (CGI)}}</label>
+							<div class="col-sm-2">
+								<input type="number" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="http_port" placeholder="80">
+							</div>
+							<div class="col-sm-6">
+								<span class="help-block" style="margin:0;">{{Port de l'interface web du NVR, utilisé par les requêtes CGI et les captures. 80 par défaut.}}</span>
+							</div>
+						</div>
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Transport}}</label>
+							<div class="col-sm-3">
+								<select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="transport">
+									<option value="auto">{{Automatique (DHIP puis CGI)}}</option>
+									<option value="dhip">{{DHIP uniquement}}</option>
+									<option value="cgi">{{CGI uniquement}}</option>
+								</select>
+							</div>
+							<div class="col-sm-6">
+								<span class="help-block" style="margin:0;">{{DHIP est le protocole natif Dahua (événements temps réel) ; CGI est le mode de secours en HTTP.}}</span>
 							</div>
 						</div>
 						<div class="form-group">
@@ -155,6 +217,7 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 							<div class="col-sm-8">
 								<a class="btn btn-info" id="bt_dahuaTestConnection"><i class="fas fa-plug"></i> {{Tester la connexion}}</a>
 								<a class="btn btn-primary" id="bt_dahuaDiscover"><i class="fas fa-search"></i> {{Découvrir les caméras}}</a>
+								<span class="label label-default" id="span_dahuaDaemonStatus" style="display:none;margin-left:10px;" title="{{État de la connexion vue par le démon}}"></span>
 								<span class="help-block" style="margin:0;">{{La découverte crée un équipement par canal nommé sur le NVR. Enregistrez l'équipement avant de lancer la découverte.}}</span>
 							</div>
 						</div>
@@ -231,5 +294,5 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 	</div>
 </div>
 
-<?php include_file('desktop', 'dahua', 'js', 'dahua'); ?>
 <?php include_file('core', 'plugin.template', 'js'); ?>
+<?php include_file('desktop', 'dahua', 'js', 'dahua'); ?>

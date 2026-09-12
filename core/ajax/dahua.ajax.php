@@ -25,52 +25,66 @@ try {
 
     ajax::init();
 
-    /* Vérifie que le NVR répond et retourne son identité. */
-    if (init('action') == 'testConnection') {
-        $nvr = dahua::byId(init('id'));
-        if (!is_object($nvr)) {
+    /* Récupère un équipement du plugin, avec contrôle de type.
+     * eqLogic::byId() charge n'importe quel équipement et le caste vers la classe
+     * appelante : sans ce contrôle, un id étranger provoquerait une Error fatale. */
+    $getDahua = function ($_id, $_type = null) {
+        $eqLogic = dahua::byId($_id);
+        if (!is_object($eqLogic) || $eqLogic->getEqType_name() != 'dahua') {
             throw new Exception(__('Équipement introuvable', __FILE__));
         }
-        if ($nvr->getConfiguration('type') != dahua::TYPE_NVR) {
-            throw new Exception(__('Cette action ne s\'applique qu\'à un NVR', __FILE__));
+        if ($_type !== null && $eqLogic->getConfiguration('type') != $_type) {
+            throw new Exception($_type == dahua::TYPE_NVR
+                ? __('Cette action ne s\'applique qu\'à un NVR', __FILE__)
+                : __('Cette action ne s\'applique qu\'à une caméra', __FILE__));
         }
+        return $eqLogic;
+    };
+
+    /* Les réponses CGI sont au format clé=valeur ; on ne garde que la valeur. */
+    $value = function ($_raw) {
+        if ($_raw === false) {
+            return '?';
+        }
+        $parts = explode('=', trim($_raw), 2);
+        return isset($parts[1]) ? trim($parts[1]) : trim($_raw);
+    };
+
+    if (init('action') == 'testConnection') {
+        $nvr = $getDahua(init('id'), dahua::TYPE_NVR);
 
         $type = dahua::cgiRequest($nvr, 'magicBox.cgi?action=getDeviceType');
         if ($type === false) {
-            throw new Exception(__('Le NVR ne répond pas. Vérifiez l\'adresse, le port et les identifiants.', __FILE__));
+            throw new Exception(__('Le NVR ne répond pas. Vérifiez l\'adresse, le port HTTP et les identifiants.', __FILE__));
         }
         $version  = dahua::cgiRequest($nvr, 'magicBox.cgi?action=getSoftwareVersion');
         $channels = dahua::cgiRequest($nvr, 'magicBox.cgi?action=getProductDefinition&name=MaxRemoteInputChannels');
 
-        // Les réponses sont au format clé=valeur ; on ne garde que la valeur.
-        $value = function ($_raw) {
-            if ($_raw === false) {
-                return '?';
-            }
-            $parts = explode('=', trim($_raw), 2);
-            return isset($parts[1]) ? trim($parts[1]) : trim($_raw);
-        };
+        /*
+         * Capacités réellement exposées par le matériel : beaucoup de NVR n'ont
+         * aucune sortie d'alarme, et coaxialControlIO ne concerne que les caméras
+         * HDCVI. Autant le dire à l'utilisateur plutôt que de le laisser cliquer
+         * sur des commandes qui échoueront.
+         */
+        $alarmOut = dahua::cgiRequest($nvr, 'configManager.cgi?action=getConfig&name=AlarmOut');
+        $coaxial  = dahua::cgiRequest($nvr, 'coaxialControlIO.cgi?action=getCaps&channel=1');
 
         ajax::success(array(
-            'type'     => $value($type),
-            'version'  => $value($version),
-            'channels' => $value($channels),
+            'type'       => $value($type),
+            'version'    => $value($version),
+            'channels'   => $value($channels),
+            'alarmOut'   => ($alarmOut !== false && trim($alarmOut) != ''),
+            'coaxial'    => ($coaxial !== false),
         ));
     }
 
-    /* Crée un équipement par canal nommé sur le NVR. */
     if (init('action') == 'discover') {
         unautorizedInDemo();
-        $created = dahua::discoverCameras(init('id'));
-        ajax::success(array('created' => $created));
+        ajax::success(array('created' => dahua::discoverCameras(init('id'))));
     }
 
-    /* Capture immédiate sur le canal d'une caméra. */
     if (init('action') == 'snapshot') {
-        $cam = dahua::byId(init('id'));
-        if (!is_object($cam)) {
-            throw new Exception(__('Équipement introuvable', __FILE__));
-        }
+        $cam = $getDahua(init('id'), dahua::TYPE_CAMERA);
         $url = $cam->takeSnapshot();
         if ($url === false) {
             throw new Exception(__('Capture impossible. Vérifiez le canal et les identifiants du NVR.', __FILE__));
@@ -78,13 +92,22 @@ try {
         ajax::success(array('url' => $url));
     }
 
-    /* État des connexions vu par le démon. */
     if (init('action') == 'daemonStatus') {
-        ajax::success(dahua::sendToDaemon(array('cmd' => 'status')));
+        $info = dahua::deamon_info();
+        if ($info['state'] != 'ok') {
+            ajax::success(array('daemon' => 'nok', 'nvrs' => array()));
+        }
+        $answer = dahua::sendToDaemon(array('cmd' => 'status'));
+        ajax::success(array(
+            'daemon' => 'ok',
+            'nvrs'   => (is_array($answer) && isset($answer['result'])) ? $answer['result'] : array(),
+        ));
     }
 
     throw new Exception(__('Aucune méthode correspondante à :', __FILE__) . ' ' . init('action'));
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
+    // Throwable et non Exception : en PHP 8 une Error (méthode inexistante,
+    // erreur de type) n'hérite pas d'Exception et donnerait un HTTP 500 muet.
     ajax::error(displayException($e), $e->getCode());
 }

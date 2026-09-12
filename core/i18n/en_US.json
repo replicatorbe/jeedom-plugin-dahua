@@ -1,6 +1,5 @@
 {
     "plugins/dahua/core/class/dahua.class.php": {
-        "Aucun NVR configuré": "No NVR configured",
         "Le démon ne peut pas être lancé :": "The daemon cannot be started:",
         "Démon introuvable dans resources/dahuad/": "Daemon not found in resources/dahuad/",
         "Lancement du démon :": "Starting daemon:",
@@ -12,9 +11,6 @@
         "Aucun canal retourné par le NVR": "The NVR returned no channel",
         "Requête CGI en échec :": "CGI request failed:",
         "Le NVR a refusé la requête :": "The NVR rejected the request:",
-        "L'adresse IP du NVR est obligatoire": "The NVR IP address is required",
-        "La caméra doit être rattachée à un NVR": "The camera must be attached to an NVR",
-        "Le numéro de canal doit être supérieur ou égal à 1": "The channel number must be 1 or greater",
         "Le PTZ ne s'applique qu'à une caméra": "PTZ only applies to a camera",
         "NVR parent introuvable": "Parent NVR not found",
         "Le NVR a refusé la commande PTZ": "The NVR rejected the PTZ command",
@@ -51,28 +47,48 @@
         "Arrêté": "Stopped",
         "Démarrez le démon depuis la configuration du plugin": "Start the daemon from the plugin configuration",
         "Déconnecté": "Disconnected",
-        "Vérifiez l'adresse, les identifiants et que le NVR est joignable": "Check the address, the credentials and that the NVR is reachable"
+        "Vérifiez l'adresse, les identifiants et que le NVR est joignable": "Check the address, the credentials and that the NVR is reachable",
+        "Aucun NVR configuré et activé": "No NVR configured and enabled",
+        "Configuration incomplète :": "Incomplete configuration:",
+        "Création du canal": "Creating channel",
+        "Ce canal est déjà utilisé par l'équipement :": "This channel is already used by the device:",
+        "Cette commande ne s'applique qu'à une caméra": "This command only applies to a camera",
+        "Sortie non disponible sur ce matériel. Les caméras reliées au switch PoE interne du NVR ne sont pas joignables depuis Jeedom.": "Output not available on this hardware. Cameras connected to the internal PoE switch of the NVR cannot be reached from Jeedom.",
+        "Ce matériel ne dispose pas de sortie d'alarme.": "This hardware has no alarm output.",
+        "Racine du plugin introuvable": "Plugin root folder not found",
+        "Création du dossier de captures impossible :": "Cannot create the snapshot folder:",
+        "Configuration incomplète": "Incomplete configuration",
+        "Renseignez l'adresse et les identifiants du NVR": "Enter the address and the credentials of the NVR",
+        "Stockage absent": "Storage missing",
+        "Lumière blanche ON": "White light ON",
+        "Lumière blanche OFF": "White light OFF",
+        "Sirène ON": "Siren ON",
+        "Sirène OFF": "Siren OFF",
+        "Sortie alarme ON": "Alarm output ON",
+        "Sortie alarme OFF": "Alarm output OFF"
     },
     "plugins/dahua/core/php/jeeDahua.php": {
         "Vous n'êtes pas autorisé à effectuer cette action": "You are not authorized to perform this action",
         "Traitement de l'événement en échec :": "Event processing failed:",
         "NVR inconnu, événement ignoré :": "Unknown NVR, event ignored:",
         "connecté": "connected",
-        "déconnecté": "disconnected"
+        "déconnecté": "disconnected",
+        "canal": "channel",
+        "sans équipement : lancez la découverte des caméras": "has no device: run the camera discovery"
     },
     "plugins/dahua/core/ajax/dahua.ajax.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access",
         "Équipement introuvable": "Device not found",
         "Cette action ne s'applique qu'à un NVR": "This action only applies to an NVR",
-        "Le NVR ne répond pas. Vérifiez l'adresse, le port et les identifiants.": "The NVR is not responding. Check the address, port and credentials.",
         "Capture impossible. Vérifiez le canal et les identifiants du NVR.": "Snapshot failed. Check the channel and the NVR credentials.",
-        "Aucune méthode correspondante à :": "No method matching:"
+        "Aucune méthode correspondante à :": "No method matching:",
+        "Cette action ne s'applique qu'à une caméra": "This action only applies to a camera",
+        "Le NVR ne répond pas. Vérifiez l'adresse, le port HTTP et les identifiants.": "The NVR is not responding. Check the address, the HTTP port and the credentials."
     },
     "plugins/dahua/desktop/php/dahua.php": {
         "Gestion": "Management",
         "Ajouter un NVR": "Add an NVR",
         "Configuration": "Configuration",
-        "Mes équipements Dahua": "My Dahua devices",
         "Rechercher": "Search",
         "Equipement visible": "Visible device",
         "Equipement non visible": "Hidden device",
@@ -112,7 +128,25 @@
         "Commande": "Command",
         "Type": "Type",
         "Paramètres": "Settings",
-        "Action": "Action"
+        "Action": "Action",
+        "401 - Accès non autorisé": "401 - Unauthorized access",
+        "Aucun équipement pour le moment. Pour démarrer :": "No device yet. To get started:",
+        "Cliquez sur « Ajouter un NVR » et donnez-lui un nom.": "Click \"Add an NVR\" and give it a name.",
+        "Renseignez son adresse IP, ses ports et ses identifiants.": "Enter its IP address, its ports and its credentials.",
+        "Enregistrez l'équipement, puis cliquez sur « Tester la connexion ».": "Save the device, then click \"Test connection\".",
+        "Cliquez enfin sur « Découvrir les caméras » : un équipement est créé pour chaque canal du NVR.": "Finally click \"Discover cameras\": one device is created for each channel of the NVR.",
+        "Caméras": "Cameras",
+        "Aucune caméra. Ouvrez un NVR puis cliquez sur « Découvrir les caméras ».": "No camera yet. Open an NVR, then click \"Discover cameras\".",
+        "Port DHIP": "DHIP port",
+        "Port HTTP (CGI)": "HTTP port (CGI)",
+        "Port de l'interface web du NVR, utilisé par les requêtes CGI et les captures. 80 par défaut.": "Port of the NVR web interface, used by CGI requests and snapshots. 80 by default.",
+        "Transport": "Transport",
+        "Automatique (DHIP puis CGI)": "Automatic (DHIP then CGI)",
+        "DHIP uniquement": "DHIP only",
+        "CGI uniquement": "CGI only",
+        "DHIP est le protocole natif Dahua (événements temps réel) ; CGI est le mode de secours en HTTP.": "DHIP is the native Dahua protocol (real-time events); CGI is the HTTP fallback mode.",
+        "État de la connexion vue par le démon": "Connection state as seen by the daemon",
+        "Changer le type supprimera les commandes propres à l'ancien type.": "Changing the type will delete the commands specific to the previous type."
     },
     "plugins/dahua/desktop/js/dahua.js": {
         "Enregistrez d'abord l'équipement.": "Save the device first.",
@@ -126,7 +160,13 @@
         "Identifiant interne": "Internal id",
         "Afficher": "Display",
         "Historiser": "Log history",
-        "Tester": "Test"
+        "Tester": "Test",
+        "Enregistrez d\\'abord l\\'équipement.": "Save the device first.",
+        "Enregistrez vos modifications avant de continuer": "Save your changes before continuing",
+        "Démon : aucune information": "Daemon: no information",
+        "Connecté": "Connected",
+        "Déconnecté": "Disconnected",
+        "Nom": "Name"
     },
     "plugins/dahua/plugin_info/configuration.php": {
         "Démon": "Daemon",
@@ -141,6 +181,7 @@
         "Capturer à chaque détection": "Capture on every detection",
         "Une capture au maximum toutes les 10 secondes par caméra. L'image est exposée par la commande « Dernière image ».": "At most one capture every 10 seconds per camera. The image is exposed by the \"Last snapshot\" command.",
         "Captures conservées par caméra": "Snapshots kept per camera",
-        "Les plus anciennes sont supprimées automatiquement.": "The oldest ones are deleted automatically."
+        "Les plus anciennes sont supprimées automatiquement.": "The oldest ones are deleted automatically.",
+        "401 - Accès non autorisé": "401 - Unauthorized access"
     }
 }

@@ -17,7 +17,7 @@
 
 /*
  * Point d'entrée appelé exclusivement par le démon dahuad.
- *   GET  ?apikey=…&test=1        → vérification de joignabilité au démarrage du démon
+ *   GET  ?apikey=…&test=1        → vérification de joignabilité au démarrage
  *   GET  ?apikey=…&action=config → configuration des NVR à écouter
  *   POST ?apikey=…  + corps JSON → remontée d'un lot d'événements
  */
@@ -45,56 +45,82 @@ if (!is_array($input) || empty($input)) {
     die();
 }
 
-// Le démon envoie toujours un lot, même pour un unique événement.
 $events = isset($input['events']) && is_array($input['events']) ? $input['events'] : array($input);
 
 foreach ($events as $event) {
     try {
         handleDahuaEvent($event);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         log::add('dahua', 'error', __('Traitement de l\'événement en échec :', __FILE__)
                . ' ' . $e->getMessage() . ' — ' . json_encode($event));
     }
 }
 echo 'OK';
 
-/**
- * Applique un événement remonté par le démon sur les commandes Jeedom.
+/*
+ * Retient la date fournie par le NVR seulement si elle est plausible.
+ * Une horloge NVR non synchronisée, ou un décalage de fuseau, produirait sinon
+ * des points d'historique dans le futur et ferait rejeter silencieusement des
+ * événements par le coeur (qui compare la date à collectDate).
  */
+function dahuaEventDate($_event) {
+    if (!isset($_event['time']) || $_event['time'] == '') {
+        return null;
+    }
+    $ts = strtotime($_event['time']);
+    if ($ts === false || abs($ts - time()) > 300) {
+        return null;                                  // le coeur horodatera lui-même
+    }
+    return $_event['time'];
+}
+
 function handleDahuaEvent($_event) {
     $nvrId = isset($_event['nvr_id']) ? (int) $_event['nvr_id'] : 0;
     $nvr   = dahua::byId($nvrId);
-    if (!is_object($nvr)) {
+    if (!is_object($nvr) || $nvr->getEqType_name() != 'dahua') {
         log::add('dahua', 'debug', __('NVR inconnu, événement ignoré :', __FILE__) . ' ' . $nvrId);
         return;
     }
 
     $type = isset($_event['type']) ? $_event['type'] : 'event';
-    $date = isset($_event['time']) && $_event['time'] != '' ? $_event['time'] : date('Y-m-d H:i:s');
+    $date = dahuaEventDate($_event);
 
     /* --- État de la connexion au NVR --------------------------------------- */
     if ($type == 'status') {
-        $online = ($_event['status'] == 'connected') ? 1 : 0;
+        $online = (isset($_event['status']) && $_event['status'] == 'connected') ? 1 : 0;
         $nvr->checkAndUpdateCmd('online', $online);
         if ($online) {
             log::add('dahua', 'info', $nvr->getHumanName() . ' ' . __('connecté', __FILE__));
-        } else {
-            log::add('dahua', 'warning', $nvr->getHumanName() . ' ' . __('déconnecté', __FILE__)
-                   . (isset($_event['error']) ? ' : ' . $_event['error'] : ''));
-            // Une caméra ne peut plus rien détecter si le NVR est injoignable.
-            foreach (dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE_CAMERA)) as $cam) {
-                if ($cam->getConfiguration('nvr_id') == $nvr->getId()) {
-                    foreach (dahua::$_channelEvents as $def) {
-                        $cam->checkAndUpdateCmd($def['logicalId'], 0);
-                    }
+            return;
+        }
+
+        log::add('dahua', 'warning', $nvr->getHumanName() . ' ' . __('déconnecté', __FILE__)
+               . (isset($_event['error']) ? ' : ' . $_event['error'] : ''));
+
+        /*
+         * Une caméra ne peut plus rien détecter si le NVR est injoignable. On ne
+         * réécrit que les commandes réellement à 1 : un checkAndUpdateCmd inutile
+         * écrit quand même en cache et met à jour lastCommunication.
+         */
+        foreach (dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE_CAMERA), true) as $cam) {
+            if ($cam->getConfiguration('nvr_id') != $nvr->getId()) {
+                continue;
+            }
+            foreach (dahua::$_channelEvents as $def) {
+                $cmd = $cam->getCmd('info', $def['logicalId']);
+                if (is_object($cmd) && $cmd->execCmd() == 1) {
+                    $cmd->event(0);
                 }
             }
         }
         return;
     }
 
-    /* --- URL d'une capture prise par le démon ------------------------------ */
+    /* --- Capture prise par le démon ---------------------------------------- */
     if ($type == 'snapshot') {
+        if (!isset($_event['channel'], $_event['url'])) {
+            return;
+        }
         $cam = dahua::byLogicalId('cam::' . $nvrId . '::' . (int) $_event['channel'], 'dahua');
         if (is_object($cam)) {
             $cam->checkAndUpdateCmd('snapshot', $_event['url'], $date);
@@ -102,7 +128,7 @@ function handleDahuaEvent($_event) {
         return;
     }
 
-    /* --- Événement DHIP ----------------------------------------------------- */
+    /* --- Événement DHIP ou CGI --------------------------------------------- */
     $code   = isset($_event['code']) ? $_event['code'] : '';
     $action = isset($_event['action']) ? $_event['action'] : 'Pulse';
     if ($code == '') {
@@ -117,10 +143,14 @@ function handleDahuaEvent($_event) {
 
     if ($channel > 0) {
         $target = dahua::byLogicalId('cam::' . $nvrId . '::' . $channel, 'dahua');
+        if (!is_object($target)) {
+            log::add('dahua', 'debug', $nvr->getHumanName() . ' ' . __('canal', __FILE__) . ' ' . $channel
+                   . ' ' . __('sans équipement : lancez la découverte des caméras', __FILE__));
+        }
     }
-    if (!is_object($target)) {
-        // Événement global, ou canal sans équipement créé : il revient au NVR.
-        $target = $nvr;
+    $isCamera = is_object($target);
+    if (!$isCamera) {
+        $target = $nvr;                               // événement global, ou canal non découvert
     }
 
     $label = $code . ' ' . $action;
@@ -128,14 +158,13 @@ function handleDahuaEvent($_event) {
         $label .= ' (' . $_event['data']['Name'] . ')';
     }
 
-    // Commande binaire dédiée si l'événement est connu.
-    $map = ($target->getId() == $nvr->getId()) ? dahua::$_nvrEvents : dahua::$_channelEvents;
+    $map = $isCamera ? dahua::$_channelEvents : dahua::$_nvrEvents;
     if (isset($map[$code])) {
         $target->checkAndUpdateCmd($map[$code]['logicalId'], $value, $date);
     }
 
     $target->checkAndUpdateCmd('lastevent', $label, $date);
-    $target->checkAndUpdateCmd('lastevent_date', $date, $date);
+    $target->checkAndUpdateCmd('lastevent_date', ($date !== null) ? $date : date('Y-m-d H:i:s'), $date);
 
     log::add('dahua', 'debug', $target->getHumanName() . ' ' . $label);
 }

@@ -32,28 +32,73 @@ function dahuaToggleType() {
 /* Appelée par plugin.template.js après le chargement d'un équipement. */
 function printEqLogic(_eqLogic) {
   dahuaToggleType()
+
+  /* Le type reste modifiable : changer NVR <-> caméra recalcule le logicalId et
+     supprime les commandes de l'ancien type. On avertit simplement l'utilisateur. */
+  var isSaved = (isset(_eqLogic) && isset(_eqLogic.id) && _eqLogic.id != '')
+  var frozen = document.getElementById('span_dahuaTypeFrozen')
+  if (frozen !== null) {
+    frozen.style.display = isSaved ? '' : 'none'
+  }
+
   var img = document.getElementById('img_dahuaSnapshot')
   if (img !== null) {
     img.style.display = 'none'
     img.src = ''
   }
+
+  /* État du démon : uniquement pertinent pour un NVR enregistré. */
+  var badge = document.getElementById('span_dahuaDaemonStatus')
+  if (badge !== null) {
+    badge.style.display = 'none'
+    badge.innerHTML = ''
+    if (isSaved && select !== null && select.value !== 'camera') {
+      dahuaRefreshDaemonStatus(_eqLogic.id)
+    }
+  }
 }
 
-/* Requête AJAX vers le contrôleur du plugin. */
-function dahuaAjax(_action, _data, _success) {
+/* Requête AJAX vers le contrôleur du plugin.
+   _options : { button: <élément à désactiver pendant l'appel>, silent: true pour ne rien afficher } */
+function dahuaAjax(_action, _data, _success, _options) {
+  var options = _options || {}
+  var button = isset(options.button) ? options.button : null
+  var released = false
+  var release = function () {
+    if (button === null || released) {
+      return
+    }
+    released = true
+    button.removeAttribute('disabled')
+    button.classList.remove('disabled')
+  }
+  if (button !== null) {
+    button.setAttribute('disabled', 'disabled')
+    button.classList.add('disabled')
+    /* Filet de sécurité : jamais de bouton bloqué si la réponse n'arrive pas. */
+    setTimeout(release, 60000)
+  }
+
   var payload = Object.assign({ action: _action }, _data || {})
   domUtils.ajax({
     type: 'POST',
     url: 'plugins/dahua/core/ajax/dahua.ajax.php',
     data: payload,
     dataType: 'json',
-    global: false,
+    noDisplayError: true,
     error: function (request, status, error) {
-      jeedomUtils.handleAjaxError(request, status, error)
+      release()
+      if (options.silent === true) {
+        return
+      }
+      domUtils.handleAjaxError(request, status, error)
     },
     success: function (data) {
+      release()
       if (data.state != 'ok') {
-        jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+        if (options.silent !== true) {
+          jeedomUtils.showAlert({ message: data.result, level: 'danger' })
+        }
         return
       }
       _success(data.result)
@@ -74,71 +119,118 @@ function dahuaCurrentId() {
   return input.value
 }
 
-document.addEventListener('DOMContentLoaded', function () {
-  var container = document.getElementById('div_pageContainer')
-  if (container === null) {
+/* Les actions serveur travaillent sur les valeurs en base : refuse de partir
+   si l'écran contient des modifications non enregistrées. */
+function dahuaCheckSaved() {
+  var modified = (typeof jeeFrontEnd !== 'undefined' && jeeFrontEnd.modifyWithoutSave === true)
+    || window.modifyWithoutSave === true
+  if (modified) {
+    jeedomUtils.showAlert({
+      message: '{{Enregistrez vos modifications avant de continuer}}',
+      level: 'warning'
+    })
+    return false
+  }
+  return true
+}
+
+/* Badge d'état de la connexion du NVR telle que vue par le démon. */
+function dahuaRefreshDaemonStatus(_id) {
+  if (document.getElementById('span_dahuaDaemonStatus') === null) {
+    return
+  }
+  dahuaAjax('daemonStatus', {}, function (result) {
+    var badge = document.getElementById('span_dahuaDaemonStatus')
+    if (badge === null) {
+      return
+    }
+    var status = (isset(result) && is_object(result)) ? result[_id] : null
+    if (!isset(status)) {
+      badge.className = 'label label-danger'
+      badge.innerHTML = '<i class="fas fa-plug"></i> {{Démon : aucune information}}'
+      badge.style.display = ''
+      return
+    }
+    var connected = (status.state == 'connected')
+    badge.className = connected ? 'label label-success' : 'label label-danger'
+    badge.innerHTML = connected ? '<i class="fas fa-plug"></i> {{Connecté}}' : '<i class="fas fa-plug"></i> {{Déconnecté}}'
+    if (isset(status.transport) && status.transport != '') {
+      badge.innerHTML += ' (' + status.transport + ')'
+    }
+    badge.style.display = ''
+  }, { silent: true })
+}
+
+/* Les écouteurs sont posés à la racine du script : les pages sont chargées en
+   AJAX par jeedomUtils.loadPage, l'évènement DOMContentLoaded a déjà eu lieu. */
+document.getElementById('div_pageContainer').addEventListener('change', function (event) {
+  if (event.target.closest('#sel_dahuaType')) {
+    dahuaToggleType()
+  }
+})
+
+document.getElementById('div_pageContainer').addEventListener('click', function (event) {
+  var target = null
+
+  /* --- Test de connexion au NVR --- */
+  if (target = event.target.closest('#bt_dahuaTestConnection')) {
+    if (target.classList.contains('disabled')) { return }
+    if (!dahuaCheckSaved()) { return }
+    var id = dahuaCurrentId()
+    if (id === null) { return }
+    jeedomUtils.showAlert({ message: '{{Test en cours...}}', level: 'info', timeOut: 2000 })
+    dahuaAjax('testConnection', { id: id }, function (result) {
+      jeedomUtils.showAlert({
+        message: '{{Connexion réussie}} : ' + result.type + ' — ' + result.version
+          + ' (' + result.channels + ' {{canaux}})',
+        level: 'success',
+        timeOut: 8000
+      })
+      dahuaRefreshDaemonStatus(id)
+    }, { button: target })
     return
   }
 
-  container.addEventListener('change', function (event) {
-    if (event.target.closest('#sel_dahuaType')) {
-      dahuaToggleType()
-    }
-  })
-
-  container.addEventListener('click', function (event) {
-    var target = null
-
-    /* --- Test de connexion au NVR --- */
-    if (target = event.target.closest('#bt_dahuaTestConnection')) {
-      var id = dahuaCurrentId()
-      if (id === null) { return }
-      jeedomUtils.showAlert({ message: '{{Test en cours...}}', level: 'info', timeOut: 2000 })
-      dahuaAjax('testConnection', { id: id }, function (result) {
+  /* --- Découverte des caméras --- */
+  if (target = event.target.closest('#bt_dahuaDiscover')) {
+    if (target.classList.contains('disabled')) { return }
+    if (!dahuaCheckSaved()) { return }
+    var id = dahuaCurrentId()
+    if (id === null) { return }
+    dahuaAjax('discover', { id: id }, function (result) {
+      if (result.created === 0) {
         jeedomUtils.showAlert({
-          message: '{{Connexion réussie}} : ' + result.type + ' — ' + result.version
-            + ' (' + result.channels + ' {{canaux}})',
-          level: 'success',
-          timeOut: 8000
+          message: '{{Aucune nouvelle caméra : toutes sont déjà créées.}}',
+          level: 'warning'
         })
+        return
+      }
+      jeedomUtils.showAlert({
+        message: result.created + ' {{caméra(s) créée(s). Rechargement...}}',
+        level: 'success'
       })
-      return
-    }
+      setTimeout(function () {
+        jeedomUtils.loadPage('index.php?v=d&m=dahua&p=dahua&id=' + id)
+      }, 1500)
+    }, { button: target })
+    return
+  }
 
-    /* --- Découverte des caméras --- */
-    if (target = event.target.closest('#bt_dahuaDiscover')) {
-      var id = dahuaCurrentId()
-      if (id === null) { return }
-      dahuaAjax('discover', { id: id }, function (result) {
-        if (result.created === 0) {
-          jeedomUtils.showAlert({
-            message: '{{Aucune nouvelle caméra : toutes sont déjà créées.}}',
-            level: 'warning'
-          })
-          return
-        }
-        jeedomUtils.showAlert({
-          message: result.created + ' {{caméra(s) créée(s). Rechargement...}}',
-          level: 'success'
-        })
-        setTimeout(function () { window.location.reload() }, 1500)
-      })
-      return
-    }
-
-    /* --- Capture immédiate --- */
-    if (target = event.target.closest('#bt_dahuaSnapshot')) {
-      var id = dahuaCurrentId()
-      if (id === null) { return }
-      jeedomUtils.showAlert({ message: '{{Capture en cours...}}', level: 'info', timeOut: 2000 })
-      dahuaAjax('snapshot', { id: id }, function (result) {
-        var img = document.getElementById('img_dahuaSnapshot')
-        img.src = result.url + '?t=' + Date.now()
-        img.style.display = ''
-      })
-      return
-    }
-  })
+  /* --- Capture immédiate --- */
+  if (target = event.target.closest('#bt_dahuaSnapshot')) {
+    if (target.classList.contains('disabled')) { return }
+    if (!dahuaCheckSaved()) { return }
+    var id = dahuaCurrentId()
+    if (id === null) { return }
+    jeedomUtils.showAlert({ message: '{{Capture en cours...}}', level: 'info', timeOut: 2000 })
+    dahuaAjax('snapshot', { id: id }, function (result) {
+      var img = document.getElementById('img_dahuaSnapshot')
+      if (img === null) { return }
+      img.src = result.url + (result.url.indexOf('?') === -1 ? '?' : '&') + 't=' + Date.now()
+      img.style.display = ''
+    }, { button: target })
+    return
+  }
 })
 
 /* Ligne du tableau des commandes. */
@@ -150,8 +242,8 @@ function addCmdToTable(_cmd) {
     _cmd.configuration = {}
   }
 
-  var tr = '<tr class="cmd" data-cmd_id="' + init(_cmd.id) + '">'
-  tr += '<td>'
+  var tr = '<td>'
+  tr += '<span class="cmdAttr" data-l1key="id" style="display:none;"></span>'
   tr += '<div class="input-group">'
   tr += '<input class="cmdAttr form-control input-sm roundedLeft" data-l1key="name" placeholder="{{Nom}}">'
   tr += '<span class="input-group-btn">'
@@ -159,7 +251,6 @@ function addCmdToTable(_cmd) {
   tr += '</span>'
   tr += '<span class="cmdAttr input-group-addon roundedRight" data-l1key="display" data-l2key="icon" style="font-size:19px;padding:0 5px 0 0!important;"></span>'
   tr += '</div>'
-  tr += '<input class="cmdAttr form-control input-sm" data-l1key="logicalId" style="margin-top:3px;" placeholder="{{Identifiant interne}}" readonly>'
   tr += '</td>'
   tr += '<td>'
   tr += '<span class="type" type="' + init(_cmd.type) + '">' + jeedom.cmd.availableType() + '</span>'
@@ -177,10 +268,15 @@ function addCmdToTable(_cmd) {
   }
   tr += '<a class="btn btn-danger btn-xs cmdAction pull-right" data-action="remove"><i class="fas fa-minus-circle"></i></a>'
   tr += '</td>'
-  tr += '</tr>'
 
-  document.getElementById('table_cmd').insertAdjacentHTML('beforeend', tr)
-  var lastRow = document.querySelector('#table_cmd tbody tr:last-child')
-  jeedom.cmd.changeType(lastRow, init(_cmd.subType))
-  lastRow.setJeeValues(_cmd, '.cmdAttr')
+  /* Une ligne créée en DOM : insertAdjacentHTML sur la table génère un <tbody>
+     par insertion et toutes les commandes se retrouveraient dans la même ligne. */
+  var newRow = document.createElement('tr')
+  newRow.innerHTML = tr
+  newRow.classList.add('cmd')
+  newRow.setAttribute('data-cmd_id', init(_cmd.id))
+  newRow.setAttribute('title', '{{Identifiant interne}} : ' + init(_cmd.logicalId))
+  document.getElementById('table_cmd').querySelector('tbody').appendChild(newRow)
+  newRow.setJeeValues(_cmd, '.cmdAttr')
+  jeedom.cmd.changeType(newRow, init(_cmd.subType))
 }

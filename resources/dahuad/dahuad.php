@@ -2,15 +2,20 @@
 <?php
 /* Démon Dahua pour Jeedom.
  *
- * Processus autonome : il ne charge PAS le coeur de Jeedom. Toute sa configuration
- * est récupérée au démarrage sur le callback HTTP du plugin, et les événements y sont
- * repoussés de la même façon. Une mise à jour de Jeedom ne peut donc ni le casser,
- * ni nécessiter son redémarrage.
+ * Processus autonome : il ne charge PAS le coeur de Jeedom. Sa configuration est
+ * récupérée sur le callback HTTP du plugin, et les événements y sont repoussés de
+ * la même façon. Une mise à jour de Jeedom ne peut donc ni le casser, ni le
+ * redémarrer.
+ *
+ * Deux transports sont disponibles par NVR :
+ *   - DHIP : protocole binaire natif Dahua, le plus riche (événements VTO/VTH).
+ *   - CGI  : long-polling HTTP multipart, plus tolérant aux firmwares récents et
+ *            détectant une coupure en ~15 s grâce au heartbeat.
+ * En mode « auto », DHIP est tenté en premier et le démon bascule sur CGI après
+ * deux échecs consécutifs.
  *
  * This file is part of Jeedom. Licensed under GNU GPL v3 or later.
  */
-
-declare(ticks = 1);
 
 /* ---------------------------------------------------------------- garde CLI ---
  * Sur une installation où Apache est en AllowOverride None, les .htaccess sont
@@ -23,18 +28,32 @@ if (php_sapi_name() != 'cli' || isset($_SERVER['REQUEST_METHOD']) || !isset($_SE
     exit(1);
 }
 
+pcntl_async_signals(true);
+
 /* ------------------------------------------------------------------- options */
 $opt = getopt('', array('callback:', 'apikey:', 'pid:', 'socketport:', 'loglevel:'));
-foreach (array('callback', 'apikey', 'pid', 'socketport') as $required) {
+foreach (array('callback', 'pid', 'socketport') as $required) {
     if (!isset($opt[$required])) {
         fwrite(STDERR, "Argument manquant : --$required\n");
         exit(1);
     }
 }
+/*
+ * La clé API est lue sur STDIN quand elle n'est pas passée en argument : une
+ * ligne de commande est visible par tout utilisateur local via `ps`.
+ */
+if (!isset($opt['apikey'])) {
+    $line = fgets(STDIN);
+    $opt['apikey'] = ($line === false) ? '' : trim($line);
+}
+if ($opt['apikey'] === '') {
+    fwrite(STDERR, "Clé API absente (--apikey ou première ligne de STDIN)\n");
+    exit(1);
+}
 
 /* ------------------------------------------------------------------- logging */
 class DahuaLog {
-    const LEVELS = array('debug' => 0, 'info' => 1, 'warning' => 2, 'error' => 3);
+    const LEVELS = array('debug' => 0, 'info' => 1, 'warning' => 2, 'error' => 3, 'none' => 99);
     private static $min = 3;
 
     public static function setLevel($_level) {
@@ -54,11 +73,9 @@ class DahuaLog {
 DahuaLog::setLevel(isset($opt['loglevel']) ? $opt['loglevel'] : 'error');
 
 /* =============================================================================
- * Client DHIP : une instance par NVR.
+ * Base commune aux deux transports.
  * ========================================================================== */
-class DahuaDhipClient {
-
-    const MAGIC = "\x20\x00\x00\x00DHIP";
+abstract class DahuaTransport {
 
     /*
      * Événements émis à la cadence vidéo ou purement internes au NVR.
@@ -69,20 +86,21 @@ class DahuaDhipClient {
         'IntelliFrame', 'VideoMotionInfo', 'MDResult', 'SystemState',
         'LeFunctionStatusSync', 'InterVideoAccess', 'NewFile', 'UpdateFile',
         'RtspSessionDisconnect', 'CallSnap', 'AccessSnap', 'TimeChange',
-        'NTPAdjustTime', 'DGSErrorReport',
+        'NTPAdjustTime', 'DGSErrorReport', 'Heartbeat',
+        // Émis toutes les 2 min par le NVR quand sa mosaïque d'affichage change.
+        'VideoSplit', 'VideoWidgetChanged', 'StorageDeviceState',
     );
 
-    public $config;                 // bloc de configuration du NVR
-    public $socket = null;
-    public $state = 'disconnected'; // disconnected | connected
+    const MAX_BUFFER = 4194304;      // 4 Mo : au-delà, le flux est corrompu
 
-    private $buffer = '';
-    private $requestId = 0;
-    private $sessionId = 0;
-    private $keepAliveInterval = 60;
-    private $lastKeepAliveSent = 0;
-    private $awaitingKeepAlive = false;
+    public $config;
+    public $socket = null;
+    public $state = 'disconnected';
+
+    protected $buffer = '';
+    protected $lastActivity = 0;
     private $nextRetry = 0;
+    private $failures = 0;
 
     public function __construct($_config) {
         $this->config = $_config;
@@ -96,13 +114,103 @@ class DahuaDhipClient {
         return (int) $this->config['eqLogic_id'];
     }
 
-    /* Une reconnexion n'est retentée qu'après expiration du délai de backoff. */
+    abstract public function label();
+    abstract public function connect();
+    abstract public function readEvents();
+    abstract public function tick();
+
+    public function disconnect() {
+        if (is_resource($this->socket)) {
+            @fclose($this->socket);
+        }
+        $this->socket = null;
+        $this->state = 'disconnected';
+        $this->buffer = '';
+    }
+
     public function readyToRetry() {
         return time() >= $this->nextRetry;
     }
 
-    public function scheduleRetry($_delay) {
-        $this->nextRetry = time() + $_delay;
+    /*
+     * Backoff exponentiel avec gigue. Sans la gigue, plusieurs NVR coupés par la
+     * même panne réseau se reconnectent à la même seconde et saturent à nouveau
+     * le serveur HTTP embarqué.
+     */
+    public function scheduleRetry($_base, $_reset = false) {
+        if ($_reset) {
+            $this->failures = 0;
+            $this->nextRetry = time();
+            return;
+        }
+        $this->failures++;
+        $delay = min(300, $_base * pow(2, min(6, $this->failures - 1)));
+        $delay = (int) ($delay * (0.9 + (mt_rand(0, 200) / 1000)));
+        $this->nextRetry = time() + $delay;
+        return $delay;
+    }
+
+    public function failureCount() {
+        return $this->failures;
+    }
+
+    /* Ajoute au buffer en le bornant : un flux corrompu ne doit pas remplir la RAM. */
+    protected function appendToBuffer($_data) {
+        $this->buffer .= $_data;
+        $this->lastActivity = time();
+        if (strlen($this->buffer) > self::MAX_BUFFER) {
+            DahuaLog::error($this->name() . ' buffer hors limite, flux considéré comme corrompu');
+            $this->buffer = '';
+            return false;
+        }
+        return true;
+    }
+
+    /* Met un événement brut au format attendu par Jeedom, quel que soit le transport. */
+    protected function normalizeEvent($_code, $_action, $_index, $_data) {
+        /*
+         * Le NVR indexe ses canaux à partir de 0, son interface les nomme D1..Dn.
+         * Index vaut -1 sur les événements d'appareil (VTO), et pour AlarmLocal
+         * il désigne une entrée d'alarme physique, pas un canal vidéo.
+         */
+        $channel = ((int) $_index) + 1;
+        if ($_code == 'AlarmLocal' || $channel < 1) {
+            $channel = 0;
+        }
+        if (!is_array($_data)) {
+            $_data = array();
+        }
+        return array(
+            'nvr_id'  => $this->id(),
+            'channel' => $channel,
+            'code'    => $_code,
+            'action'  => ($_action === '' || $_action === null) ? 'Pulse' : $_action,
+            'data'    => $_data,
+            'time'    => isset($_data['LocaleTime']) ? $_data['LocaleTime'] : date('Y-m-d H:i:s'),
+        );
+    }
+
+    protected function isBlacklisted($_code) {
+        return $_code === '' || in_array($_code, self::BLACKLIST, true);
+    }
+}
+
+/* =============================================================================
+ * Transport DHIP : socket binaire, protocole natif Dahua.
+ * ========================================================================== */
+class DahuaDhipTransport extends DahuaTransport {
+
+    const MAGIC = "\x20\x00\x00\x00DHIP";
+    const MAX_PACKET = 1048576;      // 1 Mo : très au-dessus de tout paquet réel
+
+    private $requestId = 0;
+    private $sessionId = 0;
+    private $keepAliveInterval = 60;
+    private $lastKeepAliveSent = 0;
+    private $awaitingKeepAlive = false;
+
+    public function label() {
+        return 'DHIP';
     }
 
     /* ----------------------------------------------------------- bas niveau */
@@ -117,39 +225,69 @@ class DahuaDhipClient {
              . pack('V', 0);
     }
 
+    /*
+     * Écriture complète : sur un socket non bloquant fwrite peut n'écrire qu'une
+     * partie du tampon. Un en-tête DHIP tronqué désynchronise définitivement le flux.
+     */
     private function send($_payload) {
         if (!is_resource($this->socket)) {
             return false;
         }
         $body = json_encode($_payload);
         $this->requestId++;
-        $written = @fwrite($this->socket, $this->buildHeader(strlen($body)) . $body);
-        return $written !== false;
+        $data = $this->buildHeader(strlen($body)) . $body;
+
+        $total = strlen($data);
+        $sent = 0;
+        $deadline = microtime(true) + 2;
+        while ($sent < $total) {
+            $written = @fwrite($this->socket, substr($data, $sent));
+            if ($written === false) {
+                return false;
+            }
+            if ($written === 0) {
+                if (microtime(true) > $deadline) {
+                    DahuaLog::warning($this->name() . ' écriture bloquée');
+                    return false;
+                }
+                $read = null; $write = array($this->socket); $except = null;
+                @stream_select($read, $write, $except, 1);
+                continue;
+            }
+            $sent += $written;
+        }
+        return true;
     }
 
-    /*
-     * Extrait du buffer tous les paquets DHIP complets.
-     * Indispensable : le NVR fragmente ses réponses, et un paquet peut arriver
-     * en plusieurs lectures ou plusieurs paquets dans une seule lecture.
-     */
+    /* Extrait du buffer tous les paquets DHIP complets. */
     private function drainPackets() {
         $packets = array();
         while (strlen($this->buffer) >= 32) {
             if (substr($this->buffer, 0, 8) !== self::MAGIC) {
-                // Flux désynchronisé : on cherche le prochain en-tête valide.
                 $next = strpos($this->buffer, self::MAGIC, 1);
                 if ($next === false) {
                     $this->buffer = '';
                     DahuaLog::warning($this->name() . ' flux désynchronisé, buffer vidé');
                     break;
                 }
-                DahuaLog::debug($this->name() . ' resynchronisation du flux (' . $next . ' octets ignorés)');
+                DahuaLog::debug($this->name() . ' resynchronisation (' . $next . ' octets ignorés)');
                 $this->buffer = substr($this->buffer, $next);
                 continue;
             }
             $length = unpack('V', substr($this->buffer, 16, 4))[1];
+            /*
+             * Une longueur aberrante vient d'un faux en-tête (MAGIC apparu dans un
+             * payload, ou écriture partielle côté NVR). Sans cette borne, le buffer
+             * ne serait plus jamais purgé et la mémoire croîtrait sans fin.
+             */
+            if ($length < 0 || $length > self::MAX_PACKET) {
+                DahuaLog::warning($this->name() . ' longueur DHIP aberrante (' . $length . '), resynchronisation');
+                $next = strpos($this->buffer, self::MAGIC, 1);
+                $this->buffer = ($next === false) ? '' : substr($this->buffer, $next);
+                continue;
+            }
             if (strlen($this->buffer) < 32 + $length) {
-                break;                                  // paquet incomplet, on attend la suite
+                break;                              // paquet incomplet, on attend la suite
             }
             $packets[] = substr($this->buffer, 32, $length);
             $this->buffer = substr($this->buffer, 32 + $length);
@@ -157,25 +295,40 @@ class DahuaDhipClient {
         return $packets;
     }
 
-    /* Lecture bloquante courte, utilisée uniquement pendant la phase de connexion. */
+    /*
+     * Lecture utilisée pendant la connexion. Elle BOUCLE : fread plafonne à la
+     * taille de chunk du flux (8192 octets) et une réponse du NVR peut arriver
+     * fragmentée sur plusieurs segments TCP.
+     */
     private function readPackets($_timeout = 6) {
-        $read = array($this->socket); $write = null; $except = null;
-        if (@stream_select($read, $write, $except, $_timeout) < 1) {
-            return array();
+        $deadline = microtime(true) + $_timeout;
+        while (true) {
+            $packets = $this->drainPackets();
+            if (!empty($packets)) {
+                return $packets;
+            }
+            $left = $deadline - microtime(true);
+            if ($left <= 0) {
+                return array();
+            }
+            $read = array($this->socket); $write = null; $except = null;
+            if (@stream_select($read, $write, $except, (int) $left, (int) (fmod($left, 1) * 1000000)) < 1) {
+                return array();
+            }
+            $data = @fread($this->socket, 65535);
+            if ($data === '' || $data === false) {
+                return false;
+            }
+            if (!$this->appendToBuffer($data)) {
+                return false;
+            }
         }
-        $data = @fread($this->socket, 65535);
-        if ($data === '' || $data === false) {
-            return false;                               // connexion fermée
-        }
-        $this->buffer .= $data;
-        return $this->drainPackets();
     }
 
     /* ------------------------------------------------------------ connexion */
 
     public function connect() {
         $this->disconnect();
-        $this->buffer = '';
         $this->requestId = 0;
         $this->sessionId = 0;
 
@@ -203,6 +356,7 @@ class DahuaDhipClient {
         stream_set_blocking($this->socket, false);
         $this->state = 'connected';
         $this->lastKeepAliveSent = time();
+        $this->lastActivity = time();
         $this->awaitingKeepAlive = false;
         return array(true, '');
     }
@@ -212,7 +366,7 @@ class DahuaDhipClient {
      * rejetée par le NVR, qui renvoie le sel (random) et le realm du challenge.
      */
     private function login() {
-        $this->send(array(
+        if (!$this->send(array(
             'id'      => 10000,
             'magic'   => '0x1234',
             'method'  => 'global.login',
@@ -224,7 +378,9 @@ class DahuaDhipClient {
                 'password'   => '',
                 'userName'   => $this->config['username'],
             ),
-        ));
+        ))) {
+            return array(false, 'envoi du challenge impossible');
+        }
         $packets = $this->readPackets();
         if ($packets === false || empty($packets)) {
             return array(false, 'aucune réponse au challenge de connexion');
@@ -240,7 +396,7 @@ class DahuaDhipClient {
             strtoupper(md5($this->config['username'] . ':' . $challenge['params']['realm'] . ':' . $this->config['password']))
         ));
 
-        $this->send(array(
+        if (!$this->send(array(
             'id'      => 10000,
             'magic'   => '0x1234',
             'method'  => 'global.login',
@@ -253,7 +409,9 @@ class DahuaDhipClient {
                 'loginType'     => 'Direct',
                 'authorityType' => 'Default',
             ),
-        ));
+        ))) {
+            return array(false, 'envoi de l\'authentification impossible');
+        }
         $packets = $this->readPackets();
         if ($packets === false || empty($packets)) {
             return array(false, 'aucune réponse à l\'authentification');
@@ -291,13 +449,15 @@ class DahuaDhipClient {
     }
 
     private function attachEvents() {
-        $this->send(array(
+        if (!$this->send(array(
             'id'      => $this->requestId,
             'magic'   => '0x1234',
             'method'  => 'eventManager.attach',
             'session' => $this->sessionId,
             'params'  => array('codes' => array('All')),
-        ));
+        ))) {
+            return false;
+        }
         $packets = $this->readPackets();
         if ($packets === false || empty($packets)) {
             return false;
@@ -306,26 +466,16 @@ class DahuaDhipClient {
         return !empty($result['result']);
     }
 
-    public function disconnect() {
-        if (is_resource($this->socket)) {
-            @fclose($this->socket);
-        }
-        $this->socket = null;
-        $this->state = 'disconnected';
-    }
-
     /* -------------------------------------------------------- fonctionnement */
 
-    /*
-     * Lit ce qui est disponible sur le socket et retourne la liste des événements.
-     * Retourne false si la connexion est perdue.
-     */
     public function readEvents() {
         $data = @fread($this->socket, 65535);
         if ($data === '' || $data === false) {
             return false;
         }
-        $this->buffer .= $data;
+        if (!$this->appendToBuffer($data)) {
+            return false;
+        }
 
         $events = array();
         foreach ($this->drainPackets() as $packet) {
@@ -340,54 +490,294 @@ class DahuaDhipClient {
             if (!isset($message['method']) || $message['method'] != 'client.notifyEventStream') {
                 continue;
             }
+            if (!isset($message['params']['eventList']) || !is_array($message['params']['eventList'])) {
+                continue;
+            }
             foreach ($message['params']['eventList'] as $raw) {
-                if (in_array(isset($raw['Code']) ? $raw['Code'] : '', self::BLACKLIST, true)) {
+                $code = isset($raw['Code']) ? $raw['Code'] : '';
+                if ($this->isBlacklisted($code)) {
                     continue;
                 }
-                $events[] = $this->normalizeEvent($raw);
+                $events[] = $this->normalizeEvent(
+                    $code,
+                    isset($raw['Action']) ? $raw['Action'] : 'Pulse',
+                    isset($raw['Index']) ? $raw['Index'] : -1,
+                    isset($raw['Data']) ? $raw['Data'] : array()
+                );
             }
         }
         return $events;
     }
 
-    /* Met l'événement brut du NVR au format attendu par Jeedom. */
-    private function normalizeEvent($_raw) {
-        $code = isset($_raw['Code']) ? $_raw['Code'] : '';
-        // Le NVR indexe ses canaux à partir de 0, son interface les nomme D1..Dn.
-        // Index vaut -1 sur les événements d'appareil (VTO), et pour AlarmLocal
-        // il désigne une entrée d'alarme physique, pas un canal vidéo.
-        $channel = isset($_raw['Index']) ? ((int) $_raw['Index']) + 1 : 0;
-        if ($code == 'AlarmLocal' || $channel < 1) {
-            $channel = 0;
-        }
-        return array(
-            'nvr_id'  => $this->id(),
-            'channel' => $channel,
-            'code'    => $code,
-            'action'  => isset($_raw['Action']) ? $_raw['Action'] : 'Pulse',
-            'data'    => isset($_raw['Data']) ? $_raw['Data'] : array(),
-            'time'    => isset($_raw['Data']['LocaleTime']) ? $_raw['Data']['LocaleTime'] : date('Y-m-d H:i:s'),
-        );
-    }
-
-    /* Le NVR ferme la session si aucun keepAlive n'est reçu dans l'intervalle annoncé. */
-    public function keepAliveTick() {
-        if (time() - $this->lastKeepAliveSent < $this->keepAliveInterval - 5) {
+    /*
+     * Le NVR ferme la session si aucun keepAlive n'arrive dans l'intervalle annoncé.
+     * On émet à la moitié de l'intervalle : les 5 s de marge de la version
+     * précédente ne laissaient aucune tolérance au moindre ralentissement.
+     */
+    public function tick() {
+        $period = max(5, (int) ($this->keepAliveInterval / 2));
+        if (time() - $this->lastKeepAliveSent < $period) {
             return true;
         }
         if ($this->awaitingKeepAlive) {
-            DahuaLog::warning($this->name() . ' keepAlive sans réponse, reconnexion');
+            DahuaLog::warning($this->name() . ' keepAlive sans réponse');
             return false;
         }
-        $this->send(array(
+        if (!$this->send(array(
             'id'      => $this->requestId,
             'magic'   => '0x1234',
             'method'  => 'global.keepAlive',
             'session' => $this->sessionId,
             'params'  => array('timeout' => $this->keepAliveInterval, 'active' => true),
-        ));
+        ))) {
+            return false;
+        }
         $this->lastKeepAliveSent = time();
         $this->awaitingKeepAlive = true;
+        return true;
+    }
+}
+
+/* =============================================================================
+ * Transport CGI : long-polling HTTP multipart.
+ *
+ * La requête HTTP est écrite à la main sur un socket brut plutôt que confiée à
+ * curl : le flux reste ainsi un stream sélectionnable par la boucle principale,
+ * au lieu d'immobiliser un curl_exec sans fin.
+ * ========================================================================== */
+class DahuaCgiTransport extends DahuaTransport {
+
+    const HEARTBEAT = 5;             // le NVR émet un keepalive à cette cadence
+
+    private $boundary = 'myboundary';
+
+    public function label() {
+        return 'CGI';
+    }
+
+    private function httpPort() {
+        return isset($this->config['http_port']) && (int) $this->config['http_port'] > 0
+             ? (int) $this->config['http_port']
+             : 80;
+    }
+
+    public function connect() {
+        $this->disconnect();
+
+        $path = '/cgi-bin/eventManager.cgi?action=attach&codes=%5BAll%5D&heartbeat=' . self::HEARTBEAT;
+
+        // Première requête : elle sert uniquement à récupérer le challenge Digest.
+        list($status, $headers, $rest, $socket) = $this->request($path, null);
+        if ($status === 0) {
+            return array(false, $rest);            // $rest porte le message d'erreur
+        }
+        if ($status == 200) {
+            // Certains équipements acceptent sans authentification.
+            return $this->startStream($socket, $headers, $rest);
+        }
+        if (is_resource($socket)) {
+            @fclose($socket);
+        }
+        if ($status != 401) {
+            return array(false, 'réponse HTTP inattendue : ' . $status);
+        }
+
+        $challenge = $this->parseDigestChallenge($headers);
+        if ($challenge === false) {
+            return array(false, 'challenge Digest illisible');
+        }
+
+        list($status, $headers, $rest, $socket) = $this->request($path, $challenge);
+        if ($status === 0) {
+            return array(false, $rest);
+        }
+        if ($status == 401) {
+            if (is_resource($socket)) { @fclose($socket); }
+            return array(false, 'utilisateur inconnu ou mot de passe incorrect');
+        }
+        if ($status != 200) {
+            if (is_resource($socket)) { @fclose($socket); }
+            return array(false, 'réponse HTTP inattendue : ' . $status);
+        }
+        return $this->startStream($socket, $headers, $rest);
+    }
+
+    private function startStream($_socket, $_headers, $_rest) {
+        if (preg_match('/boundary=([^\s;]+)/i', $_headers, $m)) {
+            $this->boundary = trim($m[1], "\"' \t\r\n");
+        }
+        $this->socket = $_socket;
+        stream_set_blocking($this->socket, false);
+        $this->buffer = $_rest;
+        $this->state = 'connected';
+        $this->lastActivity = time();
+        return array(true, '');
+    }
+
+    /*
+     * Envoie une requête GET et lit uniquement les en-têtes de la réponse.
+     * Retourne [status, en-têtes bruts, début du corps déjà lu, socket].
+     */
+    private function request($_path, $_challenge) {
+        $errno = 0; $errstr = '';
+        $socket = @stream_socket_client(
+            'tcp://' . $this->config['ip'] . ':' . $this->httpPort(),
+            $errno, $errstr, 8
+        );
+        if ($socket === false) {
+            return array(0, '', 'connexion TCP impossible : ' . $errstr, null);
+        }
+        stream_set_timeout($socket, 10);
+
+        $request  = "GET " . $_path . " HTTP/1.1\r\n";
+        $request .= "Host: " . $this->config['ip'] . ':' . $this->httpPort() . "\r\n";
+        $request .= "Accept: multipart/x-mixed-replace\r\n";
+        if ($_challenge !== null) {
+            $request .= 'Authorization: ' . $this->buildDigestHeader($_challenge, $_path) . "\r\n";
+        }
+        $request .= "Connection: keep-alive\r\n\r\n";
+
+        if (@fwrite($socket, $request) === false) {
+            @fclose($socket);
+            return array(0, '', 'envoi de la requête impossible', null);
+        }
+
+        // Lecture des en-têtes jusqu'à la ligne vide.
+        $headers = '';
+        $deadline = microtime(true) + 10;
+        while (strpos($headers, "\r\n\r\n") === false) {
+            if (microtime(true) > $deadline) {
+                @fclose($socket);
+                return array(0, '', 'délai dépassé en attente des en-têtes', null);
+            }
+            $chunk = @fread($socket, 2048);
+            if ($chunk === '' || $chunk === false) {
+                @fclose($socket);
+                return array(0, '', 'connexion fermée pendant les en-têtes', null);
+            }
+            $headers .= $chunk;
+        }
+        $split = strpos($headers, "\r\n\r\n");
+        $rest = substr($headers, $split + 4);
+        $headers = substr($headers, 0, $split);
+
+        $status = 0;
+        if (preg_match('#^HTTP/1\.[01]\s+(\d+)#', $headers, $m)) {
+            $status = (int) $m[1];
+        }
+        return array($status, $headers, $rest, $socket);
+    }
+
+    private function parseDigestChallenge($_headers) {
+        if (!preg_match('/WWW-Authenticate:\s*Digest\s*(.+)/i', $_headers, $m)) {
+            return false;
+        }
+        $challenge = array();
+        if (preg_match_all('/(\w+)=(?:"([^"]*)"|([^,\s]+))/', $m[1], $parts, PREG_SET_ORDER)) {
+            foreach ($parts as $p) {
+                $challenge[strtolower($p[1])] = ($p[2] !== '') ? $p[2] : (isset($p[3]) ? $p[3] : '');
+            }
+        }
+        return isset($challenge['nonce']) ? $challenge : false;
+    }
+
+    /*
+     * Digest MD5 (RFC 2617). L'URI hachée doit être identique, caractère pour
+     * caractère, à celle de la ligne de requête — crochets encodés compris.
+     */
+    private function buildDigestHeader($_challenge, $_uri) {
+        $user  = $this->config['username'];
+        $pass  = $this->config['password'];
+        $realm = isset($_challenge['realm']) ? $_challenge['realm'] : '';
+        $nonce = $_challenge['nonce'];
+        $qop   = isset($_challenge['qop']) ? $_challenge['qop'] : '';
+
+        $ha1 = md5($user . ':' . $realm . ':' . $pass);
+        $ha2 = md5('GET:' . $_uri);
+
+        $header = 'Digest username="' . $user . '", realm="' . $realm . '", nonce="' . $nonce
+                . '", uri="' . $_uri . '"';
+
+        if ($qop !== '') {
+            $cnonce = bin2hex(random_bytes(8));
+            $nc = '00000001';
+            $response = md5($ha1 . ':' . $nonce . ':' . $nc . ':' . $cnonce . ':auth:' . $ha2);
+            $header .= ', qop=auth, nc=' . $nc . ', cnonce="' . $cnonce . '"';
+        } else {
+            $response = md5($ha1 . ':' . $nonce . ':' . $ha2);
+        }
+        $header .= ', response="' . $response . '"';
+        if (isset($_challenge['opaque'])) {
+            $header .= ', opaque="' . $_challenge['opaque'] . '"';
+        }
+        return $header;
+    }
+
+    public function readEvents() {
+        $data = @fread($this->socket, 65535);
+        if ($data === '' || $data === false) {
+            return false;
+        }
+        if (!$this->appendToBuffer($data)) {
+            return false;
+        }
+
+        $events = array();
+        $separator = '--' . $this->boundary;
+
+        // Un bloc n'est complet que lorsque le séparateur SUIVANT est arrivé.
+        while (($pos = strpos($this->buffer, $separator, 1)) !== false) {
+            $block = substr($this->buffer, 0, $pos);
+            $this->buffer = substr($this->buffer, $pos);
+
+            $event = $this->parseBlock($block);
+            if ($event !== null) {
+                $events[] = $event;
+            }
+        }
+        return $events;
+    }
+
+    private function parseBlock($_block) {
+        // Sépare les en-têtes du bloc de son corps.
+        $body = $_block;
+        if (($p = strpos($_block, "\r\n\r\n")) !== false) {
+            $body = substr($_block, $p + 4);
+        } elseif (($p = strpos($_block, "\n\n")) !== false) {
+            $body = substr($_block, $p + 2);
+        }
+        $body = trim($body);
+        if ($body === '') {
+            return null;
+        }
+
+        // Format : Code=VideoMotion;action=Start;index=7;data={ ... }
+        if (!preg_match('/Code=([^;\s]+)\s*;\s*action=([^;\s]+)\s*;\s*index=(-?\d+)(?:\s*;\s*data=(.*))?$/s', $body, $m)) {
+            return null;
+        }
+        $code = $m[1];
+        if ($this->isBlacklisted($code)) {
+            return null;
+        }
+        $data = array();
+        if (isset($m[4]) && trim($m[4]) !== '') {
+            $decoded = json_decode(trim($m[4]), true);
+            if (is_array($decoded)) {
+                $data = $decoded;
+            }
+        }
+        return $this->normalizeEvent($code, $m[2], $m[3], $data);
+    }
+
+    /*
+     * Rien à émettre : c'est le NVR qui pousse un heartbeat. Un silence prolongé
+     * signifie que la connexion est morte, même sans FIN ni RST.
+     */
+    public function tick() {
+        if (time() - $this->lastActivity > self::HEARTBEAT * 3) {
+            DahuaLog::warning($this->name() . ' aucun heartbeat depuis ' . (self::HEARTBEAT * 3) . 's');
+            return false;
+        }
         return true;
     }
 }
@@ -397,12 +787,19 @@ class DahuaDhipClient {
  * ========================================================================== */
 class DahuaDaemon {
 
+    const PUSH_TIMEOUT  = 4;         // un Jeedom lent ne doit jamais geler la boucle
+    const PUSH_ATTEMPTS = 2;
+    const PUSH_QUEUE_MAX = 500;
+
     private $opt;
     private $config = array();
-    private $clients = array();          // eqLogic_id du NVR => DahuaDhipClient
+    private $clients = array();          // eqLogic_id du NVR => DahuaTransport
     private $listener = null;
-    private $pulseResets = array();      // clé => timestamp de remise à zéro
-    private $lastSnapshot = array();     // eqLogic_id caméra => timestamp
+    private $pulseResets = array();
+    private $lastSnapshot = array();
+    private $pushQueue = array();
+    private $pushPid = 0;
+    private $reloadPending = false;
     private $running = true;
 
     public function __construct($_opt) {
@@ -417,14 +814,13 @@ class DahuaDaemon {
 
     private function callback($_query = '', $_body = null) {
         $url = $this->opt['callback'] . '?apikey=' . urlencode($this->opt['apikey']) . $_query;
-        $attempts = $_body === null ? 1 : 3;
 
-        for ($i = 0; $i < $attempts; $i++) {
+        for ($i = 0; $i < self::PUSH_ATTEMPTS; $i++) {
             $ch = curl_init($url);
             $options = array(
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_TIMEOUT        => 30,
+                CURLOPT_CONNECTTIMEOUT => 2,
+                CURLOPT_TIMEOUT        => self::PUSH_TIMEOUT,
                 CURLOPT_SSL_VERIFYPEER => false,
                 CURLOPT_SSL_VERIFYHOST => false,
             );
@@ -443,8 +839,7 @@ class DahuaDaemon {
                 return $response;
             }
             DahuaLog::error('callback en échec (HTTP ' . $code . ($error != '' ? ' / ' . $error : '')
-                          . ') tentative ' . ($i + 1) . '/' . $attempts);
-            usleep(500000);
+                          . ') tentative ' . ($i + 1) . '/' . self::PUSH_ATTEMPTS);
         }
         return false;
     }
@@ -460,9 +855,21 @@ class DahuaDaemon {
             DahuaLog::error('configuration invalide : ' . substr((string) $raw, 0, 200));
             return false;
         }
+        $config['pulse_duration']    = isset($config['pulse_duration']) ? (int) $config['pulse_duration'] : 5;
+        $config['reconnect_delay']   = isset($config['reconnect_delay']) ? (int) $config['reconnect_delay'] : 15;
+        $config['snapshot_on_event'] = isset($config['snapshot_on_event']) ? (int) $config['snapshot_on_event'] : 1;
+        $config['snapshot_keep']     = isset($config['snapshot_keep']) ? (int) $config['snapshot_keep'] : 50;
         $this->config = $config;
 
-        // Ferme les connexions des NVR supprimés ou désactivés.
+        /*
+         * Sans cela le démon daterait ses événements en UTC (il ne charge pas le
+         * coeur de Jeedom, donc jamais son date_default_timezone_set) alors que
+         * Jeedom les enregistre en heure locale : deux heures d'écart en été.
+         */
+        if (!empty($config['timezone']) && in_array($config['timezone'], timezone_identifiers_list(), true)) {
+            date_default_timezone_set($config['timezone']);
+        }
+
         $keep = array();
         foreach ($config['nvrs'] as $nvr) {
             $keep[(int) $nvr['eqLogic_id']] = $nvr;
@@ -478,18 +885,38 @@ class DahuaDaemon {
             if (isset($this->clients[$id])) {
                 $previous = $this->clients[$id]->config;
                 $this->clients[$id]->config = $nvrConfig;
-                // Une modification de connexion impose de rouvrir le socket.
                 if ($previous['ip'] != $nvrConfig['ip'] || $previous['port'] != $nvrConfig['port']
-                 || $previous['username'] != $nvrConfig['username'] || $previous['password'] != $nvrConfig['password']) {
+                 || $previous['username'] != $nvrConfig['username'] || $previous['password'] != $nvrConfig['password']
+                 || (isset($previous['transport']) ? $previous['transport'] : '') != (isset($nvrConfig['transport']) ? $nvrConfig['transport'] : '')) {
                     DahuaLog::info($this->clients[$id]->name() . ' paramètres modifiés, reconnexion');
                     $this->clients[$id]->disconnect();
+                    $this->clients[$id] = $this->makeTransport($nvrConfig);
                 }
             } else {
-                $this->clients[$id] = new DahuaDhipClient($nvrConfig);
+                $this->clients[$id] = $this->makeTransport($nvrConfig);
             }
         }
+
+        // Oublie les compteurs de caméras qui n'existent plus.
+        $known = array();
+        foreach ($config['nvrs'] as $nvr) {
+            foreach ($nvr['channels'] as $camera) {
+                $known[(int) $camera['eqLogic_id']] = true;
+            }
+        }
+        $this->lastSnapshot = array_intersect_key($this->lastSnapshot, $known);
+
         DahuaLog::info(count($this->clients) . ' NVR configuré(s)');
         return true;
+    }
+
+    /* Choisit le transport : forcé par la configuration, sinon DHIP d'abord. */
+    private function makeTransport($_nvrConfig, $_forceCgi = false) {
+        $mode = isset($_nvrConfig['transport']) ? $_nvrConfig['transport'] : 'auto';
+        if ($mode == 'cgi' || $_forceCgi) {
+            return new DahuaCgiTransport($_nvrConfig);
+        }
+        return new DahuaDhipTransport($_nvrConfig);
     }
 
     /* --------------------------------------------------------------- démarrage */
@@ -530,11 +957,15 @@ class DahuaDaemon {
 
     private function loop() {
         while ($this->running) {
-            pcntl_signal_dispatch();
             $this->reapChildren();
+            $this->drainPushQueue();
+
+            if ($this->reloadPending) {
+                $this->reloadPending = false;
+                $this->loadConfig();
+            }
             $this->connectPending();
 
-            // Sockets à surveiller : le serveur d'ordres + chaque NVR connecté.
             $read = array($this->listener);
             foreach ($this->clients as $client) {
                 if ($client->state == 'connected' && is_resource($client->socket)) {
@@ -547,7 +978,7 @@ class DahuaDaemon {
             if ($ready > 0) {
                 foreach ($read as $stream) {
                     if ($stream === $this->listener) {
-                        $this->handleOrder();
+                        $this->acceptOrders();
                     } else {
                         $this->handleNvrStream($stream);
                     }
@@ -555,29 +986,52 @@ class DahuaDaemon {
             }
 
             $this->flushPulseResets();
-            $this->keepAlives();
+            $this->ticks();
         }
     }
 
+    /*
+     * Une seule tentative de connexion par tour : un NVR filtré coûte jusqu'à 8 s
+     * et un NVR semi-mort jusqu'à 18 s. Les enchaîner ferait expirer les sessions
+     * des NVR sains.
+     */
     private function connectPending() {
-        foreach ($this->clients as $client) {
+        foreach ($this->clients as $id => $client) {
             if ($client->state == 'connected' || !$client->readyToRetry()) {
                 continue;
             }
-            DahuaLog::info($client->name() . ' connexion…');
+            DahuaLog::info($client->name() . ' connexion (' . $client->label() . ')…');
             list($ok, $error) = $client->connect();
             if ($ok) {
-                DahuaLog::info($client->name() . ' connecté');
+                DahuaLog::info($client->name() . ' connecté en ' . $client->label());
+                $client->scheduleRetry(0, true);
                 $this->push(array(array(
                     'nvr_id' => $client->id(),
                     'type'   => 'status',
                     'status' => 'connected',
                     'time'   => date('Y-m-d H:i:s'),
                 )));
-            } else {
-                $delay = max(5, (int) $this->config['reconnect_delay']);
-                DahuaLog::error($client->name() . ' ' . $error . ' — nouvel essai dans ' . $delay . 's');
-                $client->scheduleRetry($delay);
+                return;
+            }
+
+            $first = ($client->failureCount() == 0);
+            $delay = $client->scheduleRetry(max(5, (int) $this->config['reconnect_delay']));
+            DahuaLog::error($client->name() . ' ' . $error . ' — nouvel essai dans ' . $delay . 's');
+
+            /*
+             * Bascule automatique sur le CGI : certains firmwares récents refusent
+             * l'authentification DHIP tout en acceptant parfaitement le long-polling.
+             */
+            $mode = isset($client->config['transport']) ? $client->config['transport'] : 'auto';
+            if ($mode == 'auto' && $client->label() == 'DHIP' && $client->failureCount() >= 2) {
+                DahuaLog::warning($client->name() . ' DHIP en échec, bascule sur le transport CGI');
+                $config = $client->config;
+                $this->clients[$id] = $this->makeTransport($config, true);
+                $this->clients[$id]->scheduleRetry(0, true);
+            }
+
+            // Un seul signalement de déconnexion, pas un à chaque retentative.
+            if ($first) {
                 $this->push(array(array(
                     'nvr_id' => $client->id(),
                     'type'   => 'status',
@@ -586,6 +1040,7 @@ class DahuaDaemon {
                     'time'   => date('Y-m-d H:i:s'),
                 )));
             }
+            return;
         }
     }
 
@@ -596,16 +1051,7 @@ class DahuaDaemon {
             }
             $events = $client->readEvents();
             if ($events === false) {
-                DahuaLog::warning($client->name() . ' connexion perdue');
-                $client->disconnect();
-                $client->scheduleRetry(max(5, (int) $this->config['reconnect_delay']));
-                $this->push(array(array(
-                    'nvr_id' => $client->id(),
-                    'type'   => 'status',
-                    'status' => 'disconnected',
-                    'error'  => 'socket fermé par le NVR',
-                    'time'   => date('Y-m-d H:i:s'),
-                )));
+                $this->dropClient($client, 'connexion fermée par le NVR');
                 return;
             }
             if (!empty($events)) {
@@ -615,6 +1061,19 @@ class DahuaDaemon {
         }
     }
 
+    private function dropClient($_client, $_reason) {
+        DahuaLog::warning($_client->name() . ' ' . $_reason);
+        $_client->disconnect();
+        $_client->scheduleRetry(max(5, (int) $this->config['reconnect_delay']));
+        $this->push(array(array(
+            'nvr_id' => $_client->id(),
+            'type'   => 'status',
+            'status' => 'disconnected',
+            'error'  => $_reason,
+            'time'   => date('Y-m-d H:i:s'),
+        )));
+    }
+
     private function dispatchEvents($_client, $_events) {
         $batch = array();
         foreach ($_events as $event) {
@@ -622,10 +1081,14 @@ class DahuaDaemon {
                           . ' canal ' . $event['channel']);
             $batch[] = $event;
 
-            // Les événements sans fin explicite sont remis à zéro par le démon.
+            $key = $event['nvr_id'] . '|' . $event['channel'] . '|' . $event['code'];
             if ($event['action'] == 'Pulse') {
-                $key = $event['nvr_id'] . '|' . $event['channel'] . '|' . $event['code'];
+                // Événement sans fin annoncée : c'est le démon qui la produira.
                 $this->pulseResets[$key] = time() + max(1, (int) $this->config['pulse_duration']);
+            } else {
+                // Start ou Stop : le NVR gère lui-même la fin, toute remise à zéro
+                // différée écraserait un état légitime.
+                unset($this->pulseResets[$key]);
             }
 
             if ($event['action'] != 'Stop') {
@@ -637,9 +1100,69 @@ class DahuaDaemon {
         }
     }
 
-    /* Envoie un lot d'événements à Jeedom. */
+    /* ------------------------------------------------------- envoi vers Jeedom */
+
+    /*
+     * Les envois sont mis en file et confiés à un processus fils : un curl_exec
+     * synchrone dans la boucle gèlerait la lecture des NVR et ferait expirer
+     * leurs sessions.
+     */
     private function push($_events) {
-        $this->callback('', array('events' => $_events));
+        $this->pushQueue[] = $_events;
+        if (count($this->pushQueue) > self::PUSH_QUEUE_MAX) {
+            array_shift($this->pushQueue);
+            DahuaLog::warning('file d\'envoi saturée, le plus ancien lot est abandonné');
+        }
+        $this->drainPushQueue();
+    }
+
+    private function drainPushQueue() {
+        if ($this->pushPid > 0) {
+            if (pcntl_waitpid($this->pushPid, $status, WNOHANG) <= 0) {
+                return;                                  // un envoi est déjà en cours
+            }
+            $this->pushPid = 0;
+        }
+        if (empty($this->pushQueue)) {
+            return;
+        }
+
+        // Coalescence : tout ce qui attend part dans un seul POST.
+        $batch = array();
+        foreach ($this->pushQueue as $queued) {
+            $batch = array_merge($batch, $queued);
+        }
+        $this->pushQueue = array();
+
+        $pid = pcntl_fork();
+        if ($pid == -1) {
+            DahuaLog::error('fork impossible pour l\'envoi, lot abandonné');
+            return;
+        }
+        if ($pid > 0) {
+            $this->pushPid = $pid;
+            return;
+        }
+        $this->closeInheritedSockets();
+        $this->callback('', array('events' => $batch));
+        exit(0);
+    }
+
+    /*
+     * Un fils qui garderait le socket d'écoute empêcherait tout redémarrage du
+     * démon ("Address already in use") pendant toute sa durée de vie.
+     */
+    private function closeInheritedSockets() {
+        if (is_resource($this->listener)) {
+            fclose($this->listener);
+        }
+        $this->listener = null;
+        foreach ($this->clients as $client) {
+            if (is_resource($client->socket)) {
+                fclose($client->socket);
+            }
+            $client->socket = null;
+        }
     }
 
     private function flushPulseResets() {
@@ -652,15 +1175,17 @@ class DahuaDaemon {
             if ($deadline > $now) {
                 continue;
             }
-            list($nvrId, $channel, $code) = explode('|', $key);
-            $batch[] = array(
-                'nvr_id'  => (int) $nvrId,
-                'channel' => (int) $channel,
-                'code'    => $code,
-                'action'  => 'Stop',
-                'data'    => array(),
-                'time'    => date('Y-m-d H:i:s'),
-            );
+            $parts = explode('|', $key, 3);
+            if (count($parts) == 3) {
+                $batch[] = array(
+                    'nvr_id'  => (int) $parts[0],
+                    'channel' => (int) $parts[1],
+                    'code'    => $parts[2],
+                    'action'  => 'Stop',
+                    'data'    => array(),
+                    'time'    => date('Y-m-d H:i:s'),
+                );
+            }
             unset($this->pulseResets[$key]);
         }
         if (!empty($batch)) {
@@ -668,24 +1193,19 @@ class DahuaDaemon {
         }
     }
 
-    private function keepAlives() {
+    private function ticks() {
         foreach ($this->clients as $client) {
             if ($client->state != 'connected') {
                 continue;
             }
-            if (!$client->keepAliveTick()) {
-                $client->disconnect();
-                $client->scheduleRetry(2);
+            if (!$client->tick()) {
+                $this->dropClient($client, 'liaison silencieuse');
             }
         }
     }
 
     /* ----------------------------------------------------------- snapshots */
 
-    /*
-     * La capture est confiée à un processus fils : une requête HTTP vers le NVR
-     * prend plusieurs centaines de millisecondes et gèlerait la boucle principale.
-     */
     private function maybeSnapshot($_client, $_event) {
         if (empty($this->config['snapshot_on_event']) || $_event['channel'] < 1) {
             return;
@@ -693,11 +1213,10 @@ class DahuaDaemon {
         if (!isset($_client->config['channels'][$_event['channel']])) {
             return;
         }
-        $camera = $_client->config['channels'][$_event['channel']];
-        $cameraId = (int) $camera['eqLogic_id'];
+        $cameraId = (int) $_client->config['channels'][$_event['channel']]['eqLogic_id'];
 
-        // Une capture au plus toutes les 10 s par caméra, sinon une détection
-        // continue saturerait le NVR de requêtes.
+        // Une capture au plus toutes les 10 s par caméra : une détection continue
+        // saturerait sinon le NVR de requêtes.
         if (isset($this->lastSnapshot[$cameraId]) && time() - $this->lastSnapshot[$cameraId] < 10) {
             return;
         }
@@ -709,10 +1228,11 @@ class DahuaDaemon {
             return;
         }
         if ($pid > 0) {
-            return;                                     // parent : on continue la boucle
+            return;
         }
 
         // --- processus fils ---
+        $this->closeInheritedSockets();
         $url = $this->fetchSnapshot($_client->config, $_event['channel'], $cameraId);
         if ($url !== false) {
             $this->callback('', array('events' => array(array(
@@ -727,8 +1247,12 @@ class DahuaDaemon {
     }
 
     private function fetchSnapshot($_nvrConfig, $_channel, $_cameraId) {
-        $url = 'http://' . $_nvrConfig['ip'] . ':' . $_nvrConfig['port']
+        $httpPort = isset($_nvrConfig['http_port']) && (int) $_nvrConfig['http_port'] > 0
+                  ? (int) $_nvrConfig['http_port'] : 80;
+        // snapshot.cgi attend un canal 1-based, contrairement à l'index des événements.
+        $url = 'http://' . $_nvrConfig['ip'] . ':' . $httpPort
              . '/cgi-bin/snapshot.cgi?channel=' . $_channel;
+
         $ch = curl_init($url);
         curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
@@ -741,28 +1265,37 @@ class DahuaDaemon {
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if ($image === false || $code != 200 || strlen($image) < 1024) {
+        // Le NVR répond parfois 200 avec un message d'erreur en texte : on exige
+        // la signature JPEG plutôt que de se fier au code HTTP.
+        if ($image === false || $code != 200 || strlen($image) < 1024 || substr($image, 0, 2) !== "\xFF\xD8") {
             DahuaLog::warning('capture refusée par le NVR (canal ' . $_channel . ', HTTP ' . $code . ')');
             return false;
         }
 
-        $dir = realpath(__DIR__ . '/../..') . '/data/snapshots';
+        $base = realpath(__DIR__ . '/../..');
+        if ($base === false) {
+            DahuaLog::error('racine du plugin introuvable');
+            return false;
+        }
+        $dir = $base . '/data/snapshots';
         if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
             DahuaLog::error('création de ' . $dir . ' impossible');
             return false;
         }
         // Le jeton aléatoire empêche de deviner l'URL d'une capture.
-        $file = 'cam' . $_cameraId . '_' . date('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
+        // gmdate des deux côtés : la purge trie par nom, le tri doit être
+        // cohérent quel que soit le fuseau du process qui a écrit le fichier.
+        $file = 'cam' . $_cameraId . '_' . gmdate('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
         if (@file_put_contents($dir . '/' . $file, $image) === false) {
             DahuaLog::error('écriture de la capture impossible dans ' . $dir);
             return false;
         }
         $this->purgeSnapshots($dir, $_cameraId);
-        return 'plugins/dahua/data/snapshots/' . $file;
+        return 'plugins/dahua/core/php/snapshot.php?file=' . rawurlencode($file);
     }
 
     private function purgeSnapshots($_dir, $_cameraId) {
-        $keep = 50;
+        $keep = max(1, (int) $this->config['snapshot_keep']);
         $files = glob($_dir . '/cam' . $_cameraId . '_*.jpg');
         if ($files === false || count($files) <= $keep) {
             return;
@@ -773,36 +1306,66 @@ class DahuaDaemon {
         }
     }
 
-    /* Récupère les fils terminés pour ne pas laisser de zombies. */
     private function reapChildren() {
         while (pcntl_waitpid(-1, $status, WNOHANG) > 0) {
-            // rien à faire, on vide simplement la table des processus
+            // vide la table des processus
         }
     }
 
     /* ------------------------------------------------------ ordres Jeedom */
 
-    private function handleOrder() {
-        $conn = @stream_socket_accept($this->listener, 0);
-        if ($conn === false) {
-            return;
+    private function acceptOrders() {
+        // Plusieurs ordres peuvent attendre : on vide la file d'acceptation.
+        for ($i = 0; $i < 8; $i++) {
+            $conn = @stream_socket_accept($this->listener, 0);
+            if ($conn === false) {
+                return;
+            }
+            $this->handleOrder($conn);
         }
-        stream_set_timeout($conn, 5);
-        $line = fgets($conn, 65535);
-        $order = json_decode(trim((string) $line), true);
+    }
 
-        if (!is_array($order) || !isset($order['apikey']) || $order['apikey'] !== $this->opt['apikey']) {
+    /*
+     * Lecture non bloquante bornée à 1 s : un scan de port ou un client mort ne
+     * doit pas immobiliser la boucle, faute de quoi les sessions NVR expirent.
+     */
+    private function handleOrder($_conn) {
+        stream_set_blocking($_conn, false);
+        $line = '';
+        $deadline = microtime(true) + 1.0;
+        while (microtime(true) < $deadline) {
+            $read = array($_conn); $write = null; $except = null;
+            if (@stream_select($read, $write, $except, 0, 100000) < 1) {
+                continue;
+            }
+            $chunk = @fread($_conn, 65535);
+            if ($chunk === '' || $chunk === false) {
+                break;
+            }
+            $line .= $chunk;
+            if (strpos($line, "\n") !== false || strlen($line) > 65535) {
+                break;
+            }
+        }
+
+        $order = json_decode(trim($line), true);
+        if (!is_array($order) || !isset($order['apikey']) || !is_string($order['apikey'])
+         || !hash_equals((string) $this->opt['apikey'], $order['apikey'])) {
             DahuaLog::warning('ordre local rejeté : clé API invalide');
-            fwrite($conn, json_encode(array('state' => 'error', 'result' => 'invalid apikey')) . "\n");
-            fclose($conn);
+            @fwrite($_conn, json_encode(array('state' => 'error', 'result' => 'invalid apikey')) . "\n");
+            @fclose($_conn);
             return;
         }
 
         $result = array('state' => 'ok');
         switch (isset($order['cmd']) ? $order['cmd'] : '') {
             case 'reload':
-                DahuaLog::info('rechargement de la configuration');
-                $result['state'] = $this->loadConfig() ? 'ok' : 'error';
+                /*
+                 * La relecture est différée au tour suivant : l'exécuter ici ferait
+                 * une requête HTTP vers Jeedom alors qu'un worker Jeedom attend
+                 * déjà notre réponse — interblocage garanti quand PHP-FPM est saturé.
+                 */
+                $this->reloadPending = true;
                 break;
 
             case 'reconnect':
@@ -810,7 +1373,7 @@ class DahuaDaemon {
                 if (isset($this->clients[$id])) {
                     DahuaLog::info($this->clients[$id]->name() . ' reconnexion demandée');
                     $this->clients[$id]->disconnect();
-                    $this->clients[$id]->scheduleRetry(0);
+                    $this->clients[$id]->scheduleRetry(0, true);
                 } else {
                     $result['state'] = 'error';
                     $result['result'] = 'NVR inconnu';
@@ -820,7 +1383,7 @@ class DahuaDaemon {
             case 'status':
                 $status = array();
                 foreach ($this->clients as $id => $client) {
-                    $status[$id] = $client->state;
+                    $status[$id] = array('state' => $client->state, 'transport' => $client->label());
                 }
                 $result['result'] = $status;
                 break;
@@ -830,8 +1393,8 @@ class DahuaDaemon {
                 $result['result'] = 'commande inconnue';
         }
 
-        fwrite($conn, json_encode($result) . "\n");
-        fclose($conn);
+        @fwrite($_conn, json_encode($result) . "\n");
+        @fclose($_conn);
     }
 }
 
