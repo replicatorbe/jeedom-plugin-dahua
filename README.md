@@ -50,7 +50,27 @@ Jeedom, et n'a besoin de rien d'autre.
 
 ## Installation
 
-Copiez le dossier dans `plugins/dahua` de votre Jeedom, puis activez le plugin.
+Dans Jeedom : **Plugins → Gestion des plugins → Ajouter → Github**, puis :
+
+| Champ | Valeur |
+|---|---|
+| Nom du plugin | `dahua` |
+| Utilisateur | `replicatorbe` |
+| Dépôt | `jeedom-plugin-dahua` |
+| Branche | `master` pour la version stable, `beta` pour la version de développement |
+
+Activez ensuite le plugin, créez un équipement de type NVR, renseignez son
+adresse et ses identifiants, puis lancez la découverte des caméras.
+
+Installation manuelle : copiez le contenu de ce dépôt dans `plugins/dahua` de
+votre Jeedom.
+
+## Branches
+
+- **`master`** — version stable. Tout commit poussé ici est proposé en mise à
+  jour aux utilisateurs, Jeedom identifiant la version par le SHA du dernier
+  commit de la branche.
+- **`beta`** — développement. C'est la branche par défaut du dépôt.
 
 ## Architecture
 
