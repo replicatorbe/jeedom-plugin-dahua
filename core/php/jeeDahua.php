@@ -23,6 +23,11 @@
  */
 
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
+/* L'autochargeur de Jeedom ne résout que la classe portant le nom du plugin.
+ * dahua.class.php inclut dahuaRule : sans cet appel explicite, une évolution qui
+ * sortirait de la boucle d'événements plus tôt ferait échouer checkHold() sur
+ * une classe introuvable, et l'erreur serait avalée par le catch. */
+require_once __DIR__ . '/../class/dahua.class.php';
 
 if (!jeedom::apiAccess(init('apikey'), 'dahua')) {
     echo __('Vous n\'êtes pas autorisé à effectuer cette action', __FILE__);
@@ -55,6 +60,18 @@ foreach ($events as $event) {
                . ' ' . $e->getMessage() . ' — ' . json_encode($event));
     }
 }
+
+/*
+ * Fait retomber les règles dont la durée de maintien est écoulée. Le cron minute
+ * du plugin s'en charge aussi, mais il est bien trop lent pour une alarme : sur
+ * une installation active, c'est ce passage-ci qui fait presque tout le travail.
+ */
+try {
+    dahuaRule::checkHold();
+} catch (Throwable $e) {
+    log::add('dahua', 'error', __('Retour des règles en échec :', __FILE__) . ' ' . $e->getMessage());
+}
+
 echo 'OK';
 
 /*
@@ -167,4 +184,15 @@ function handleDahuaEvent($_event) {
     $target->checkAndUpdateCmd('lastevent_date', ($date !== null) ? $date : date('Y-m-d H:i:s'), $date);
 
     log::add('dahua', 'debug', $target->getHumanName() . ' ' . $label);
+
+    /*
+     * Corrélation. On transmet la date de l'ÉVÉNEMENT et non l'heure de
+     * traitement : si Jeedom a été lent ou indisponible, le démon envoie d'un
+     * seul coup tout ce qu'il avait accumulé, et prendre time() ferait passer
+     * pour simultanées des détections séparées d'une minute.
+     */
+    if ($isCamera) {
+        dahuaRule::onEvent($target, $channel, $code, $action,
+                           ($date !== null) ? strtotime($date) : time());
+    }
 }

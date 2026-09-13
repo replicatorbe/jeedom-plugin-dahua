@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.4 — 2026-09-13
+
+**Cross-detection rules**
+
+- New equipment type: a rule correlates several detections that happened within
+  the same time window and only triggers when they arrive together. Motion alone
+  is often a false positive, motion together with a crossed line almost never is.
+- Free-form conditions: any camera or a specific one, any detection or a specific
+  one, with a required number of occurrences.
+- Three camera scopes: any of them, all on the same camera (local double
+  detection), or on at least two different cameras (corroboration).
+- Two modes: all the conditions, or at least N of them.
+- Correlation window, anti-bounce cooldown and hold time, all set separately.
+- Optional arming condition, written as a Jeedom expression.
+- Jeedom actions run natively, using the scenario action picker: commands from
+  any plugin, scenarios, variables, messages. A second block of actions is played
+  on release.
+- Commands created: Triggered (historized binary info, generic type
+  `ALARM_STATE`), Trigger detail, Trigger image, Test and Reset.
+- Four ready-made templates: double detection, human confirmation, corroborated
+  intrusion, loiterer.
+- Correlation is based on the arrival dates of the detections rather than on the
+  state of the commands: it stays correct even when a pulse has already fallen
+  back, when the end of a detection was lost, or when the daemon sends a batch of
+  accumulated events at once.
+- The Health tab reports rules with no condition and rules whose condition points
+  at a deleted camera.
+- A single detection can satisfy only one condition: two overlapping conditions
+  can no longer both be credited by one event.
+- An invalid arming condition does not arm the rule and raises a message; it can
+  no longer pass for true silently.
+- A triggered rule falls back cleanly when disabled, and a lost correlation state
+  (cleared cache, restored backup) no longer leaves it stuck.
+- An action targeting a command of the rule itself is ignored rather than looping.
+- An NVR clock running ahead can no longer freeze the correlation window.
+
+**Fix**
+
+- The daemon status badge on an NVR page always showed "no information": the
+  controller answer was not read at the right place.
+
 ## 0.3 — 2026-09-12
 
 First published release.

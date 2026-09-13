@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.4 — 13/09/2026
+
+**Règles de détection croisée**
+
+- Nouveau type d'équipement : une règle rapproche plusieurs détections survenues
+  dans une même fenêtre de temps et ne déclenche que si elles arrivent ensemble.
+  Un mouvement seul est souvent un faux positif, un mouvement accompagné d'une
+  ligne franchie ne l'est presque jamais.
+- Conditions libres : n'importe quelle caméra ou une caméra précise, n'importe
+  quelle détection ou une détection précise, avec un nombre d'occurrences exigé.
+- Trois portées de caméras : peu importe lesquelles, toutes sur la même caméra
+  (double détection locale), ou sur au moins deux caméras différentes
+  (corroboration).
+- Deux modes : toutes les conditions, ou au moins N d'entre elles.
+- Fenêtre de corrélation, temporisation anti-rebond et durée de maintien
+  réglables séparément.
+- Condition d'armement facultative, sous la forme d'une expression Jeedom.
+- Actions Jeedom déclenchées nativement, avec le sélecteur d'action des
+  scénarios : commandes de tout plugin, scénarios, variables, messages. Un
+  second bloc d'actions est joué au retour au repos.
+- Commandes créées : Déclenchée (info binaire historisée, type générique
+  `ALARM_STATE`), Détail du déclenchement, Image du déclenchement, Tester et
+  Réinitialiser.
+- Quatre modèles préremplis : double détection, confirmation humaine, intrusion
+  corroborée, rôdeur.
+- La corrélation se fonde sur les dates d'arrivée des détections et non sur
+  l'état des commandes : elle reste juste même quand une impulsion est déjà
+  retombée, quand la fin d'une détection s'est perdue, ou quand le démon envoie
+  d'un coup un lot d'événements accumulés.
+- L'onglet Santé signale les règles sans condition et celles dont une condition
+  désigne une caméra supprimée.
+- Une même détection ne peut satisfaire qu'une seule condition : deux conditions
+  qui se recouvrent ne peuvent pas être validées par un unique événement.
+- Une condition d'armement invalide n'arme pas la règle, et le signale par un
+  message ; elle ne peut plus passer pour vraie en silence.
+- Une règle déclenchée retombe proprement quand on la désactive, et un état de
+  corrélation perdu (cache vidé, sauvegarde restaurée) ne la laisse plus bloquée.
+- Une action qui viserait une commande de la règle elle-même est ignorée plutôt
+  que de la relancer en boucle.
+- Une horloge de NVR en avance ne peut plus figer la fenêtre de corrélation.
+
+**Correctif**
+
+- Le badge d'état du démon sur la page d'un NVR affichait toujours « aucune
+  information » : la réponse du contrôleur n'était pas lue au bon endroit.
+
 ## 0.3 — 12/09/2026
 
 Première version publiée.

@@ -237,6 +237,128 @@ glance:
 
 It is the first place to look when nothing is coming through any more.
 
+## Cross-detection rules
+
+A single detection is often wrong: a shadow, an insect in front of the lens or
+headlights sweeping a wall are enough to raise motion detection. Two different
+detections at the same place, within the same short interval, are wrong far less
+often. That is what a **rule** does: it correlates several detections and only
+triggers when they happen together.
+
+A rule is a full equipment: it shows on the dashboard, its state is historized,
+it can be disabled like any equipment — including from a scenario — and it can
+run its own Jeedom actions without any scenario at all.
+
+### Creating a rule
+
+On the plugin page, click **Add a rule** and give it a name.
+
+The **Template** menu fills the form for the most common cases:
+
+| Template | What it sets |
+|---|---|
+| Double detection on one camera | Line crossed + Motion, same camera, 15 s |
+| Human confirmation | Human detected + Line crossed, same camera, 20 s |
+| Corroborated intrusion | 2 detections of any kind on 2 different cameras, 30 s |
+| Loiterer | 3 detections on the same camera within 60 s |
+
+Everything stays editable afterwards.
+
+### Conditions
+
+Each row of the table describes one detection to wait for:
+
+- **Camera** — a specific camera, or *Any camera*.
+- **Detection** — Motion, Line crossed, Human detected… or *Any detection*.
+- **Times** — required number of occurrences. Leave 1 in the common case; set 3
+  for "three passes in front of the same camera".
+
+A row whose camera or detection is still on "pick one" is **ignored**. This is
+deliberate: a rule saved without being filled in must not fire on the first
+detection that comes along. A sentence below the table summarises in plain words
+what the rule will do, and flags the case where it could never trigger.
+
+A single detection can satisfy only **one** condition. If you write "any
+detection" and "Motion on NORTH", two distinct detections are required, not one
+motion ticking both boxes.
+
+**Requires** chooses between *all the conditions* and *at least N of them*. The
+second mode expresses "two detections among these four" without saying which.
+
+**Cameras involved** is the most important setting:
+
+- *Any of them* — no constraint;
+- *All on the same camera* — local double detection, the one that removes false
+  positives from a single viewpoint;
+- *On at least two different cameras* — corroboration: someone crossing the
+  garden is seen by two cameras, a shadow is not. Repetition on a single channel
+  is never enough.
+
+### Delays
+
+- **Window** — maximum gap between the first and the last detection. The whole
+  chain, from the NVR to Jeedom, works to the second: a 15 s window is in
+  practice 14 to 16 s. Going below 5 s is discouraged, the NVR detection engines
+  do not return their verdict at the same time.
+- **Cooldown** — minimum delay before triggering again. Without it, a single pass
+  triggers the rule five times in a row.
+- **Hold time** — how long the *Triggered* command stays at 1.
+
+### Arming condition
+
+Optional field. The rule only triggers when the expression is true, for instance
+`#[Home][Presence][State]# == 0` to alert only while you are away. It is the same
+syntax as in a scenario, and the button on the right opens the command picker.
+
+If the expression is invalid the rule **does not trigger**, the `dahua` log says
+so as an error and **a message appears in the message centre**: a silent alarm is
+preferable to an alarm firing on a broken expression, but the fault must not go
+unnoticed. The message clears itself as soon as the expression works again.
+
+To disarm a rule entirely, uncheck "Enable" at the top of its page — a scenario
+can do it too. A triggered rule falls back cleanly at the moment it is disabled,
+release actions included.
+
+### Actions
+
+The **Actions on trigger** block uses the same picker as scenarios: commands from
+any plugin, scenarios, variables, messages. The checkboxes on the left of each
+row disable the action or run it in the background.
+
+**Actions on release** is played at the end of the hold time.
+
+Both blocks are optional. The *Triggered* command changes state in any case: if
+you prefer a scenario, simply trigger it on that command.
+
+### Commands created
+
+| Command | Type | Purpose |
+|---|---|---|
+| Triggered | info / binary | 1 for the hold time. Historized, generic type `ALARM_STATE`. |
+| Trigger detail | info / string | "NORTH Line crossed 12:00:03 + NORTH Motion 12:00:05" |
+| Trigger image | info / string | Address of the last snapshot of the camera that completed the correlation |
+| Test | action | Plays the trigger for real, actions included. Hidden by default: it runs every action of the rule, including on equipment the dashboard user may have no rights on. |
+| Reset | action | Returns the rule to idle, plays the release actions and forgets pending detections |
+
+Both **Test the rule** and **Reset** buttons are also at the bottom of the rule
+page, next to the current state and the last trigger.
+
+To send a photo in a notification, use *Trigger image*: the address requires a
+Jeedom session, so attach the file rather than the link if the recipient is
+external.
+
+### Good to know
+
+The rule works on the **arrival dates of the detections**, not on the state of
+the camera commands. This is deliberate: an instant detection falls back to 0
+after a few seconds, and a detection whose end was lost stays at 1 indefinitely.
+A scenario condition such as "both commands are at 1" would fail in the first
+case and fire wrongly in the second.
+
+Practical consequence: if Jeedom was unavailable and the daemon sends everything
+it had accumulated at once, the detections stay correlated on their real dates. A
+rule may therefore trigger late, but never wrongly.
+
 ## Use in a scenario
 
 Trigger on a human detection:

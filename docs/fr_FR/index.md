@@ -239,6 +239,136 @@ un coup d'œil :
 
 C'est le premier endroit à regarder quand plus rien ne remonte.
 
+## Règles de détection croisée
+
+Une détection isolée se trompe souvent : une ombre, un insecte devant l'objectif
+ou un phare qui balaie un mur suffisent à faire monter la détection de mouvement.
+Deux détections différentes au même endroit, dans le même court intervalle, se
+trompent beaucoup plus rarement. C'est ce que fait une **règle** : elle rapproche
+plusieurs détections et ne déclenche que si elles surviennent ensemble.
+
+Une règle est un équipement à part entière : elle apparaît sur le dashboard, son
+état s'historise, elle se désactive comme n'importe quel équipement — y compris
+depuis un scénario — et elle peut déclencher ses propres actions Jeedom sans
+qu'aucun scénario ne soit nécessaire.
+
+### Créer une règle
+
+Sur la page du plugin, cliquez sur **Ajouter une règle** et donnez-lui un nom.
+
+Le menu **Modèle** remplit le formulaire pour les cas les plus courants :
+
+| Modèle | Ce qu'il configure |
+|---|---|
+| Double détection sur une caméra | Ligne franchie + Mouvement, même caméra, 15 s |
+| Confirmation humaine | Humain détecté + Ligne franchie, même caméra, 20 s |
+| Intrusion corroborée | 2 détections quelconques sur 2 caméras différentes, 30 s |
+| Rôdeur | 3 détections sur la même caméra en 60 s |
+
+Tout reste modifiable ensuite.
+
+### Les conditions
+
+Chaque ligne du tableau décrit une détection à attendre :
+
+- **Caméra** — une caméra précise, ou *N'importe quelle caméra*.
+- **Détection** — Mouvement, Ligne franchie, Humain détecté… ou *N'importe quelle
+  détection*.
+- **Fois** — nombre d'occurrences exigées. Laissez 1 dans le cas courant ; mettez
+  3 pour « trois passages devant la même caméra ».
+
+Une ligne dont la caméra ou la détection est restée sur « à choisir » est
+**ignorée**. C'est volontaire : une règle enregistrée sans avoir été remplie ne
+doit pas se déclencher à la première détection venue. Une phrase sous le tableau
+récapitule en clair ce que la règle fera, et signale le cas où elle ne pourrait
+jamais se déclencher.
+
+Une même détection ne peut satisfaire qu'**une seule** condition. Si vous écrivez
+« n'importe quelle détection » et « Mouvement sur NORD », il faudra bien deux
+détections distinctes, pas un unique mouvement qui coche les deux cases.
+
+**Il faut** choisit entre *toutes les conditions* et *au moins N d'entre elles*.
+Le second mode sert à écrire « deux détections parmi ces quatre », sans imposer
+lesquelles.
+
+**Caméras concernées** est le réglage le plus important :
+
+- *Peu importe lesquelles* — aucune contrainte ;
+- *Toutes sur la même caméra* — c'est la double détection locale, celle qui
+  élimine les faux positifs d'un point de vue précis ;
+- *Sur au moins deux caméras différentes* — c'est la corroboration : quelqu'un
+  qui traverse le jardin est vu par deux caméras, une ombre ne l'est pas. La
+  répétition sur un seul canal n'y suffit jamais.
+
+### Les délais
+
+- **Fenêtre** — écart maximal entre la première et la dernière détection. Toute
+  la chaîne, du NVR à Jeedom, travaille à la seconde : une fenêtre de 15 s vaut
+  en pratique 14 à 16 s. Descendre sous 5 s est déconseillé, les moteurs de
+  détection du NVR ne rendent pas leur verdict en même temps.
+- **Temporisation** — délai minimal avant un nouveau déclenchement. Sans elle, un
+  seul passage déclenche la règle cinq fois de suite.
+- **Durée de maintien** — durée pendant laquelle la commande *Déclenchée* reste
+  à 1.
+
+### La condition d'armement
+
+Champ facultatif. La règle ne déclenche que si l'expression y est vraie, par
+exemple `#[Maison][Présence][Etat]# == 0` pour n'alerter qu'en votre absence.
+C'est la même syntaxe que dans un scénario, et le bouton à droite du champ ouvre
+le sélecteur de commandes.
+
+Si l'expression est invalide, la règle **ne déclenche pas**, le journal `dahua`
+l'indique en erreur et **un message apparaît dans le centre de messages** : une
+alarme muette est préférable à une alarme qui part sur une expression cassée,
+mais l'anomalie ne doit pas passer inaperçue. Le message disparaît de lui-même
+dès que l'expression redevient exploitable.
+
+Pour désarmer complètement une règle, décochez « Activer » en haut de sa page —
+un scénario peut le faire aussi. Une règle déclenchée retombe proprement au
+moment où on la désactive, actions de retour comprises.
+
+### Les actions
+
+Le bloc **Actions au déclenchement** utilise le même sélecteur que les scénarios :
+commandes de n'importe quel plugin, scénarios, variables, messages. Les cases à
+gauche de chaque ligne désactivent l'action ou l'exécutent en tâche de fond.
+
+**Actions au retour au repos** est joué à la fin de la durée de maintien.
+
+Ces deux blocs sont facultatifs. La commande *Déclenchée* change d'état dans tous
+les cas : si vous préférez un scénario, déclenchez-le simplement dessus.
+
+### Commandes créées
+
+| Commande | Type | Rôle |
+|---|---|---|
+| Déclenchée | info / binaire | 1 pendant la durée de maintien. Historisée, type générique `ALARM_STATE`. |
+| Détail du déclenchement | info / texte | « NORD Ligne franchie 12:00:03 + NORD Mouvement 12:00:05 » |
+| Image du déclenchement | info / texte | Adresse de la dernière capture de la caméra qui a complété la corrélation |
+| Tester | action | Joue le déclenchement pour de vrai, actions comprises. Masquée par défaut : elle exécute toutes les actions de la règle, y compris sur des équipements auxquels l'utilisateur du dashboard n'a pas forcément droit. |
+| Réinitialiser | action | Remet la règle au repos, joue les actions de retour et oublie les détections en attente |
+
+Les deux boutons **Tester la règle** et **Réinitialiser** sont également en bas de
+la page de la règle, avec l'état courant et le dernier déclenchement.
+
+Pour envoyer une photo dans une notification, utilisez *Image du déclenchement* :
+l'adresse demande une session Jeedom, il faut donc joindre le fichier plutôt que
+le lien si le destinataire est externe.
+
+### Bon à savoir
+
+La règle se fonde sur les **dates d'arrivée des détections**, pas sur l'état des
+commandes de la caméra. C'est voulu : une détection instantanée retombe à 0 au
+bout de quelques secondes, et une détection dont la fin s'est perdue reste à 1
+indéfiniment. Une condition de scénario du type « les deux commandes sont à 1 »
+échouerait dans le premier cas et déclencherait à tort dans le second.
+
+Conséquence pratique : si Jeedom a été indisponible et que le démon envoie d'un
+coup tout ce qu'il avait accumulé, les détections restent corrélées sur leurs
+dates réelles. Une règle peut donc se déclencher avec du retard, mais jamais à
+tort.
+
 ## Utilisation dans un scénario
 
 Déclenchement sur la détection d'un humain :

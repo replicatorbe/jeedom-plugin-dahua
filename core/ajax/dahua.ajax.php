@@ -34,9 +34,14 @@ try {
             throw new Exception(__('Équipement introuvable', __FILE__));
         }
         if ($_type !== null && $eqLogic->getConfiguration('type') != $_type) {
-            throw new Exception($_type == dahua::TYPE_NVR
-                ? __('Cette action ne s\'applique qu\'à un NVR', __FILE__)
-                : __('Cette action ne s\'applique qu\'à une caméra', __FILE__));
+            $labels = array(
+                dahua::TYPE_NVR    => __('Cette action ne s\'applique qu\'à un NVR', __FILE__),
+                dahua::TYPE_CAMERA => __('Cette action ne s\'applique qu\'à une caméra', __FILE__),
+                dahua::TYPE_RULE   => __('Cette action ne s\'applique qu\'à une règle', __FILE__),
+            );
+            throw new Exception(isset($labels[$_type])
+                ? $labels[$_type]
+                : __('Cet équipement n\'est pas du type attendu', __FILE__));
         }
         return $eqLogic;
     };
@@ -89,6 +94,22 @@ try {
         // générique précédent envoyait vérifier des identifiants corrects alors que
         // la caméra était simplement hors ligne.
         ajax::success(array('url' => $cam->takeSnapshot()));
+    }
+
+    if (init('action') == 'testRule') {
+        unautorizedInDemo();
+        $rule = $getDahua(init('id'), dahua::TYPE_RULE);
+        // test() rejoue le déclenchement complet, temporisation et condition
+        // d'armement comprises : un test qui les contournerait ne prouverait rien.
+        dahuaRule::test($rule);
+        $detail = $rule->getCmd('info', 'detail');
+        ajax::success(array('detail' => is_object($detail) ? $detail->execCmd() : ''));
+    }
+
+    if (init('action') == 'resetRule') {
+        unautorizedInDemo();
+        dahuaRule::reset($getDahua(init('id'), dahua::TYPE_RULE));
+        ajax::success(true);
     }
 
     if (init('action') == 'daemonStatus') {

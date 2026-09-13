@@ -16,14 +16,23 @@
  */
 
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
+/* L'autochargeur de Jeedom ne sait résoudre que la classe portant le nom du
+ * plugin : les classes annexes doivent être incluses explicitement. */
+require_once __DIR__ . '/dahuaRule.class.php';
 
 class dahua extends eqLogic {
 
     const TYPE_NVR    = 'nvr';
     const TYPE_CAMERA = 'camera';
+    const TYPE_RULE   = 'rule';
 
     /* Un seul rechargement du démon par requête, même si dix équipements sont enregistrés. */
     private static $_reloadScheduled = false;
+
+    /* Type de l'équipement avant enregistrement, et id avant suppression : le
+     * coeur les a déjà écrasés au moment où postSave et postRemove s'exécutent. */
+    private $_previousType = null;
+    private $_removedId    = 0;
 
     /*
      * Événements DHIP rattachés à un canal, mappés vers une commande info/binaire.
@@ -390,6 +399,26 @@ class dahua extends eqLogic {
             $this->setConfiguration('type', self::TYPE_NVR);
         }
 
+        /*
+         * L'état antérieur n'est plus lisible dans postSave : on le retient ici.
+         * Et si une règle déclenchée est en train d'être désactivée, elle doit
+         * retomber MAINTENANT, pendant qu'elle est encore active — le coeur
+         * refuse toute mise à jour de commande sur un équipement désactivé, la
+         * commande resterait donc à 1 et les actions de fin ne seraient jamais
+         * jouées.
+         */
+        $this->_previousType = null;
+        if ($this->getId() != '') {
+            $previous = self::byId($this->getId());
+            if (is_object($previous)) {
+                $this->_previousType = $previous->getConfiguration('type');
+                if ($this->_previousType == self::TYPE_RULE && $previous->getIsEnable() == 1
+                 && ($this->getIsEnable() != 1 || $this->getConfiguration('type') != self::TYPE_RULE)) {
+                    dahuaRule::release($previous);
+                }
+            }
+        }
+
         if ($this->getConfiguration('type') == self::TYPE_NVR) {
             if ($this->getConfiguration('port') == '') {
                 $this->setConfiguration('port', 80);
@@ -406,6 +435,38 @@ class dahua extends eqLogic {
              * « Ajouter » inutilisable. L'équipement incomplet est signalé par
              * deamon_info() et par l'onglet Santé.
              */
+            return;
+        }
+
+        if ($this->getConfiguration('type') == self::TYPE_RULE) {
+            /*
+             * Les valeurs viennent du formulaire sous forme de chaînes et sont
+             * comparées à des entiers par le moteur de corrélation. Aucune
+             * exception ici non plus : une règle vide doit rester enregistrable,
+             * le coeur crée l'équipement avant qu'on ait pu la remplir.
+             */
+            /*
+             * Un champ laissé vide reçoit la valeur par défaut ; une valeur saisie
+             * est seulement bornée. Zéro est légitime pour la temporisation —
+             * « aucun délai entre deux déclenchements » — mais pas ailleurs.
+             */
+            $defaults = array('window'   => dahuaRule::DEFAULT_WINDOW,
+                              'cooldown' => dahuaRule::DEFAULT_COOLDOWN,
+                              'hold'     => dahuaRule::DEFAULT_HOLD,
+                              'threshold' => dahuaRule::DEFAULT_THRESHOLD);
+            $minimums = array('window' => 1, 'cooldown' => 0, 'hold' => 1, 'threshold' => 1);
+            foreach ($defaults as $key => $default) {
+                $raw = $this->getConfiguration($key, '');
+                $value = ($raw === '' || $raw === null) ? $default : (int) $raw;
+                $this->setConfiguration($key, max($minimums[$key], $value));
+            }
+            $scope = $this->getConfiguration('camera_scope');
+            if (!in_array($scope, array(dahuaRule::SCOPE_ANY, dahuaRule::SCOPE_SAME, dahuaRule::SCOPE_DISTINCT))) {
+                $this->setConfiguration('camera_scope', dahuaRule::SCOPE_ANY);
+            }
+            if ($this->getConfiguration('mode') != dahuaRule::MODE_COUNT) {
+                $this->setConfiguration('mode', dahuaRule::MODE_ALL);
+            }
             return;
         }
 
@@ -432,23 +493,45 @@ class dahua extends eqLogic {
     public function postSave() {
         $this->migrateLegacyCommands();
 
-        if ($this->getConfiguration('type') == self::TYPE_NVR) {
-            // Recalcul inconditionnel : un équipement basculé de caméra à NVR
-            // conserverait sinon un logicalId de caméra et capterait ses événements.
-            if ($this->getLogicalId() != 'nvr::' . $this->getId()) {
-                $this->setLogicalId('nvr::' . $this->getId());
-                $this->save(true);
-            }
-            $this->createNvrCommands();
-        } else {
-            $expected = $this->cameraLogicalId();
-            if ($this->getLogicalId() != $expected) {
-                $this->setLogicalId($expected);
-                $this->save(true);
-            }
-            $this->createCameraCommands();
+        /*
+         * Le logicalId est recalculé inconditionnellement : un équipement
+         * basculé d'un type à l'autre conserverait sinon celui de son ancien
+         * type et capterait les événements d'une caméra.
+         */
+        switch ($this->getConfiguration('type')) {
+            case self::TYPE_NVR:
+                $expected = 'nvr::' . $this->getId();
+                break;
+            case self::TYPE_RULE:
+                $expected = 'rule::' . $this->getId();
+                break;
+            default:
+                $expected = $this->cameraLogicalId();
+                break;
+        }
+        if ($this->getLogicalId() != $expected) {
+            $this->setLogicalId($expected);
+            $this->save(true);
+        }
+        switch ($this->getConfiguration('type')) {
+            case self::TYPE_NVR:  $this->createNvrCommands();    break;
+            case self::TYPE_RULE: $this->createRuleCommands();   break;
+            default:              $this->createCameraCommands(); break;
         }
         $this->removeForeignCommands();
+
+        /*
+         * Un équipement qui cesse d'être une règle ne doit pas conserver son état
+         * de corrélation : s'il le redevenait, il hériterait d'une temporisation
+         * fantôme, voire d'une durée de maintien déjà expirée.
+         */
+        if ($this->_previousType == self::TYPE_RULE
+         && $this->getConfiguration('type') != self::TYPE_RULE) {
+            dahuaRule::forget($this->getId());
+        }
+        if ($this->getConfiguration('type') == self::TYPE_RULE) {
+            return;                                   // une règle n'intéresse pas le démon
+        }
         self::reloadDaemonConfig();
     }
 
@@ -458,20 +541,47 @@ class dahua extends eqLogic {
      * celles créées à la main par l'utilisateur sont conservées.
      */
     private function removeForeignCommands() {
-        $isNvr = ($this->getConfiguration('type') == self::TYPE_NVR);
-
-        $nvrIds = array('online', 'reconnect', 'alarmout_on', 'alarmout_off');
+        // 'lastevent' et 'lastevent_date' figurent dans les deux premières
+        // listes : elles survivent donc à une bascule NVR <-> caméra, et ne
+        // disparaissent que si l'équipement devient une règle.
+        $nvrIds = array('online', 'reconnect', 'alarmout_on', 'alarmout_off',
+                        'lastevent', 'lastevent_date');
         foreach (self::$_nvrEvents as $def) {
             $nvrIds[] = $def['logicalId'];
         }
         $camIds = array('snapshot', 'take_snapshot', 'ptz_preset',
-                        'light_on', 'light_off', 'siren_on', 'siren_off');
+                        'light_on', 'light_off', 'siren_on', 'siren_off',
+                        'lastevent', 'lastevent_date');
         foreach (self::$_channelEvents as $def) {
             $camIds[] = $def['logicalId'];
         }
+        $ruleIds = array('triggered', 'detail', 'image', 'rule_test', 'rule_reset');
 
-        // 'lastevent' et 'lastevent_date' existent des deux côtés : jamais supprimées.
-        $toRemove = array_diff($isNvr ? $camIds : $nvrIds, $isNvr ? $nvrIds : $camIds);
+        $byType = array(
+            self::TYPE_NVR    => $nvrIds,
+            self::TYPE_CAMERA => $camIds,
+            self::TYPE_RULE   => $ruleIds,
+        );
+        $current = $this->getConfiguration('type');
+        if (!isset($byType[$current])) {
+            /*
+             * Type inattendu : on ne supprime rien. Prendre une liste vide comme
+             * « à conserver » effacerait TOUTES les commandes de l'équipement —
+             * c'est exactement la panne « commandes du NVR effacées » déjà vécue.
+             */
+            log::add(__CLASS__, 'warning', __('Type d\'équipement inconnu, aucune commande supprimée :', __FILE__)
+                   . ' ' . $this->getHumanName() . ' (' . $current . ')');
+            return;
+        }
+        $keep = $byType[$current];
+
+        $toRemove = array();
+        foreach ($byType as $type => $ids) {
+            if ($type != $current) {
+                $toRemove = array_merge($toRemove, $ids);
+            }
+        }
+        $toRemove = array_diff(array_unique($toRemove), $keep);
         foreach ($toRemove as $logicalId) {
             $cmd = $this->getCmd(null, $logicalId);
             if (is_object($cmd)) {
@@ -482,6 +592,12 @@ class dahua extends eqLogic {
 
     /* Une caméra orpheline resterait figée sur le dashboard sans jamais rien recevoir. */
     public function preRemove() {
+        /*
+         * DB::remove() met l'id à null AVANT d'appeler postRemove : sans cette
+         * mémorisation, le nettoyage du cache porterait sur l'identifiant 0 et
+         * laisserait l'entrée réelle orpheline.
+         */
+        $this->_removedId = (int) $this->getId();
         if ($this->getConfiguration('type') != self::TYPE_NVR) {
             return true;
         }
@@ -494,7 +610,24 @@ class dahua extends eqLogic {
     }
 
     public function postRemove() {
+        if ($this->getConfiguration('type') == self::TYPE_RULE) {
+            dahuaRule::forget($this->_removedId);
+            return;                                   // aucune incidence sur le démon
+        }
         self::reloadDaemonConfig();
+    }
+
+    /*
+     * Le cron minute du coeur. Il ne sert qu'à faire retomber les règles dont la
+     * durée de maintien est écoulée alors qu'aucun événement n'arrive plus : une
+     * règle déclenchée en fin de soirée resterait sinon allumée toute la nuit.
+     */
+    public static function cron() {
+        try {
+            dahuaRule::checkHold();
+        } catch (Throwable $e) {
+            log::add(__CLASS__, 'error', __('Retour des règles en échec :', __FILE__) . ' ' . $e->getMessage());
+        }
     }
 
     /* Crée les commandes manquantes sans jamais écraser la personnalisation. */
@@ -533,6 +666,11 @@ class dahua extends eqLogic {
          */
         if (!empty($_options['invert'])) {
             $cmd->setDisplay('invertBinary', 1);
+        }
+        if (isset($_options['configuration']) && is_array($_options['configuration'])) {
+            foreach ($_options['configuration'] as $key => $value) {
+                $cmd->setConfiguration($key, $value);
+            }
         }
         $cmd->save();
         return $cmd;
@@ -577,6 +715,41 @@ class dahua extends eqLogic {
         $this->addCmdIfMissing('light_off', 'Lumière blanche OFF', 'action', 'other', array('isVisible' => 0, 'order' => $order++));
         $this->addCmdIfMissing('siren_on',  'Sirène ON',           'action', 'other', array('isVisible' => 0, 'order' => $order++));
         $this->addCmdIfMissing('siren_off', 'Sirène OFF',          'action', 'other', array('isVisible' => 0, 'order' => $order++));
+    }
+
+    private function createRuleCommands() {
+        $order = 0;
+        /*
+         * repeatEventManagement = always : sans cela, le coeur sort avant
+         * scenario::check() quand une commande reçoit deux fois la même valeur.
+         * Une seconde corrélation survenue pendant la durée de maintien ne
+         * réveillerait alors aucun scénario.
+         */
+        $this->addCmdIfMissing('triggered', 'Déclenchée', 'info', 'binary', array(
+            'isHistorized'  => 1,
+            'generic_type'  => 'ALARM_STATE',
+            'order'         => $order++,
+            'configuration' => array('repeatEventManagement' => 'always'),
+        ));
+        $this->addCmdIfMissing('detail', 'Détail du déclenchement', 'info', 'string', array(
+            'order' => $order++,
+        ));
+        $this->addCmdIfMissing('image', 'Image du déclenchement', 'info', 'string', array(
+            'isVisible'    => 0,
+            'generic_type' => 'CAMERA_URL',
+            'order'        => $order++,
+        ));
+        /*
+         * « Tester » joue toutes les actions de la règle, y compris sur des
+         * équipements auxquels l'utilisateur du dashboard n'a pas forcément
+         * droit. Masquée par défaut : le bouton de la page du plugin, réservé
+         * aux administrateurs, suffit à l'usage courant.
+         */
+        $this->addCmdIfMissing('rule_test', 'Tester', 'action', 'other', array(
+            'isVisible' => 0,
+            'order'     => $order++,
+        ));
+        $this->addCmdIfMissing('rule_reset', 'Réinitialiser', 'action', 'other', array('order' => $order++));
     }
 
     private function createNvrCommands() {
@@ -778,6 +951,43 @@ class dahua extends eqLogic {
                 'state'  => $ok,
             );
         }
+
+        /*
+         * Une règle muette ne dit rien d'elle-même : elle n'échoue pas, elle ne
+         * se déclenche simplement jamais. Deux pannes silencieuses ont déjà coûté
+         * cher à ce plugin, celle-ci est signalée ici.
+         */
+        foreach (self::byTypeAndSearchConfiguration(__CLASS__, array('type' => self::TYPE_RULE)) as $rule) {
+            $conditions = dahuaRule::conditions($rule);
+            if (count($conditions) == 0) {
+                $return[] = array(
+                    'test'   => $rule->getName(),
+                    'result' => __('Aucune condition', __FILE__),
+                    'advice' => __('Ajoutez au moins une détection à rapprocher, sinon la règle ne se déclenchera jamais', __FILE__),
+                    'state'  => false,
+                );
+                continue;
+            }
+            $missing = array();
+            foreach ($conditions as $condition) {
+                if ($condition['source'] == dahuaRule::ANY) {
+                    continue;
+                }
+                $camera = self::byId($condition['source']);
+                if (!is_object($camera) || $camera->getConfiguration('type') != self::TYPE_CAMERA) {
+                    $missing[] = $condition['source'];
+                }
+            }
+            $return[] = array(
+                'test'   => $rule->getName(),
+                'result' => empty($missing)
+                          ? (count($conditions) . ' ' . __('condition(s)', __FILE__))
+                          : __('Caméra supprimée dans une condition', __FILE__),
+                'advice' => empty($missing) ? ''
+                          : __('Rouvrez la règle et choisissez une caméra existante', __FILE__),
+                'state'  => empty($missing),
+            );
+        }
         return $return;
     }
 }
@@ -810,6 +1020,9 @@ class dahuaCmd extends cmd {
             case 'light_off':    return $eqLogic->coaxialControl(1, false);
             case 'siren_on':     return $eqLogic->coaxialControl(2, true);
             case 'siren_off':    return $eqLogic->coaxialControl(2, false);
+
+            case 'rule_test':    return dahuaRule::test($eqLogic);
+            case 'rule_reset':   return dahuaRule::reset($eqLogic);
 
             case 'alarmout_on':  return $eqLogic->alarmOutput(true);
             case 'alarmout_off': return $eqLogic->alarmOutput(false);

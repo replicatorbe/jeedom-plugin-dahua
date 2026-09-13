@@ -6,6 +6,23 @@ $plugin = plugin::byId('dahua');
 sendVarToJS('eqType', $plugin->getId());
 $eqLogics = eqLogic::byType($plugin->getId());
 $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE_NVR));
+
+/*
+ * Les listes déroulantes des conditions sont construites en JavaScript, une
+ * règle ayant un nombre de lignes variable. Elles sont donc transmises ici, et
+ * restent figées jusqu'au rechargement de la page — comme la liste des NVR du
+ * bloc caméra. La découverte des caméras recharge déjà la page.
+ */
+$dahuaCameras = array();
+foreach (dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE_CAMERA)) as $camera) {
+	$dahuaCameras[] = array('id' => $camera->getId(), 'name' => $camera->getName());
+}
+$dahuaEvents = array();
+foreach (dahua::$_channelEvents as $definition) {
+	$dahuaEvents[] = array('id' => $definition['logicalId'], 'name' => __($definition['name'], __FILE__));
+}
+sendVarToJS('dahuaCameras', $dahuaCameras);
+sendVarToJS('dahuaEvents', $dahuaEvents);
 ?>
 
 <div class="row row-overflow">
@@ -16,6 +33,11 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 				<i class="fas fa-plus-circle"></i>
 				<br>
 				<span>{{Ajouter un NVR}}</span>
+			</div>
+			<div class="cursor logoPrimary" id="bt_dahuaAddRule">
+				<i class="fas fa-project-diagram"></i>
+				<br>
+				<span>{{Ajouter une règle}}</span>
 			</div>
 			<div class="cursor eqLogicAction logoSecondary" data-action="gotoPluginConf">
 				<i class="fas fa-wrench"></i>
@@ -58,14 +80,17 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 			echo '</div>';
 		};
 
-		// Les NVR portent la connexion, les caméras en sont les canaux : deux listes distinctes.
+		// Les NVR portent la connexion, les caméras en sont les canaux, les règles
+		// corrèlent leurs détections : trois listes distinctes. Le type inconnu
+		// retombe sur NVR, c'est la valeur que preSave() pose par défaut.
 		$nvrEqLogics = array();
 		$cameraEqLogics = array();
+		$ruleEqLogics = array();
 		foreach ($eqLogics as $eqLogic) {
-			if ($eqLogic->getConfiguration('type') == dahua::TYPE_CAMERA) {
-				$cameraEqLogics[] = $eqLogic;
-			} else {
-				$nvrEqLogics[] = $eqLogic;
+			switch ($eqLogic->getConfiguration('type')) {
+				case dahua::TYPE_CAMERA: $cameraEqLogics[] = $eqLogic; break;
+				case dahua::TYPE_RULE:   $ruleEqLogics[] = $eqLogic;   break;
+				default:                 $nvrEqLogics[] = $eqLogic;    break;
 			}
 		}
 
@@ -83,6 +108,18 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 		echo '<div class="eqLogicThumbnailContainer">';
 		foreach ($cameraEqLogics as $eqLogic) {
 			$displayCard($eqLogic, 'fa-video');
+		}
+		echo '</div>';
+
+		echo '<legend><i class="fas fa-project-diagram"></i> {{Règles de détection croisée}}</legend>';
+		if (count($ruleEqLogics) == 0) {
+			echo '<div class="alert alert-info" style="margin:5px;">';
+			echo '{{Une règle déclenche des actions Jeedom quand plusieurs détections surviennent dans un court intervalle : un mouvement seul est souvent un faux positif, un mouvement accompagné d\'une ligne franchie ne l\'est presque jamais.}}';
+			echo '</div>';
+		}
+		echo '<div class="eqLogicThumbnailContainer">';
+		foreach ($ruleEqLogics as $eqLogic) {
+			$displayCard($eqLogic, 'fa-project-diagram');
 		}
 		echo '</div>';
 		?>
@@ -158,6 +195,7 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 								<select class="eqLogicAttr form-control" id="sel_dahuaType" data-l1key="configuration" data-l2key="type">
 									<option value="nvr">{{NVR / Enregistreur}}</option>
 									<option value="camera">{{Caméra (canal)}}</option>
+									<option value="rule">{{Règle de détection croisée}}</option>
 								</select>
 							</div>
 							<div class="col-sm-5">
@@ -266,6 +304,167 @@ $nvrs = dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE
 						<div class="form-group">
 							<div class="col-sm-offset-3 col-sm-8">
 								<img id="img_dahuaSnapshot" style="max-width:100%;display:none;border-radius:4px;">
+							</div>
+						</div>
+					</fieldset>
+
+					<!-- =========================== RÈGLE =========================== -->
+					<fieldset class="dahuaRuleBlock">
+						<legend><i class="fas fa-bullseye"></i> {{Détections à rapprocher}}</legend>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Modèle}}</label>
+							<div class="col-sm-4">
+								<select class="form-control" id="sel_dahuaRuleTemplate">
+									<option value="">{{Partir d'un modèle...}}</option>
+									<option value="double">{{Double détection sur une caméra}}</option>
+									<option value="human">{{Confirmation humaine}}</option>
+									<option value="corroborate">{{Intrusion corroborée (2 caméras)}}</option>
+									<option value="prowler">{{Rôdeur (3 détections en 1 minute)}}</option>
+								</select>
+							</div>
+							<div class="col-sm-5">
+								<span class="help-block" style="margin:0;">{{Remplit les conditions et les délais. Tout reste modifiable ensuite.}}</span>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<div class="col-sm-offset-3 col-sm-9">
+								<div class="table-responsive">
+									<table id="table_dahuaConditions" class="table table-bordered table-condensed">
+										<thead>
+											<tr>
+												<th style="width:40%;">{{Caméra}}</th>
+												<th style="width:40%;">{{Détection}}</th>
+												<th style="width:12%;">{{Fois}}</th>
+												<th style="width:8%;"></th>
+											</tr>
+										</thead>
+										<tbody></tbody>
+									</table>
+								</div>
+								<a class="btn btn-default btn-sm" id="bt_dahuaAddCondition"><i class="fas fa-plus-circle"></i> {{Ajouter une condition}}</a>
+								<span class="help-block" style="margin:5px 0 0 0;">{{« Fois » exige plusieurs occurrences de la même détection : trois passages devant la même caméra, par exemple.}}</span>
+								<div id="span_dahuaRuleSummary" class="help-block" style="margin:8px 0 0 0;"></div>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Il faut}}</label>
+							<div class="col-sm-4">
+								<select class="eqLogicAttr form-control" id="sel_dahuaRuleMode" data-l1key="configuration" data-l2key="mode">
+									<option value="all">{{Toutes les conditions ci-dessus}}</option>
+									<option value="count">{{Au moins N conditions parmi elles}}</option>
+								</select>
+							</div>
+							<div class="col-sm-4 dahuaRuleThreshold" style="display:none;">
+								<div class="input-group">
+									<span class="input-group-addon">{{N =}}</span>
+									<input type="number" min="1" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="threshold" placeholder="2" title="{{Nombre de conditions à satisfaire}}">
+								</div>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Dans une fenêtre de}}</label>
+							<div class="col-sm-2">
+								<input type="number" min="1" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="window" placeholder="15">
+							</div>
+							<div class="col-sm-7">
+								<span class="help-block" style="margin:0;">{{Secondes. Écart maximal entre la première et la dernière détection. Toute la chaîne est à la seconde : une fenêtre de 15 s vaut en pratique 14 à 16 s.}}</span>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Caméras concernées}}</label>
+							<div class="col-sm-4">
+								<select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="camera_scope">
+									<option value="any">{{Peu importe lesquelles}}</option>
+									<option value="same">{{Toutes sur la même caméra}}</option>
+									<option value="distinct">{{Sur au moins deux caméras différentes}}</option>
+								</select>
+							</div>
+							<div class="col-sm-5">
+								<span class="help-block" style="margin:0;">{{« La même caméra » est la double détection locale ; « deux caméras différentes » est la corroboration, la répétition sur un seul canal n'y suffit pas.}}</span>
+							</div>
+						</div>
+
+						<legend><i class="fas fa-stopwatch"></i> {{Délais}}</legend>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Temporisation}}</label>
+							<div class="col-sm-2">
+								<input type="number" min="0" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="cooldown" placeholder="30">
+							</div>
+							<div class="col-sm-7">
+								<span class="help-block" style="margin:0;">{{Secondes. Délai minimal avant un nouveau déclenchement. Sans lui, un seul passage déclenche cinq fois.}}</span>
+							</div>
+						</div>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Durée de maintien}}</label>
+							<div class="col-sm-2">
+								<input type="number" min="1" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="hold" placeholder="10">
+							</div>
+							<div class="col-sm-7">
+								<span class="help-block" style="margin:0;">{{Secondes pendant lesquelles la commande « Déclenchée » reste à 1.}}</span>
+							</div>
+						</div>
+
+						<legend><i class="fas fa-lock"></i> {{Armement}}</legend>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Condition d'armement}}</label>
+							<div class="col-sm-6">
+								<div class="input-group">
+									<input type="text" class="eqLogicAttr form-control" id="in_dahuaArmCondition" data-l1key="configuration" data-l2key="arm_condition" placeholder="#[Maison][Présence][Etat]# == 0">
+									<span class="input-group-btn">
+										<a class="btn btn-default roundedRight" id="bt_dahuaArmCondition" title="{{Choisir une commande}}"><i class="fas fa-list-alt"></i></a>
+									</span>
+								</div>
+							</div>
+							<div class="col-sm-3">
+								<span class="help-block" style="margin:0;">{{Facultatif. La règle ne déclenche que si cette expression est vraie.}}</span>
+							</div>
+						</div>
+						<div class="form-group">
+							<div class="col-sm-offset-3 col-sm-8">
+								<span class="help-block" style="margin:0;">{{Décocher « Activer » en haut de cette page désarme complètement la règle, et un scénario peut le faire aussi.}}</span>
+							</div>
+						</div>
+
+						<legend><i class="fas fa-bolt"></i> {{Actions au déclenchement}}</legend>
+						<div class="form-group">
+							<div class="col-sm-offset-1 col-sm-10">
+								<div id="div_dahuaRuleActions"></div>
+								<a class="btn btn-default btn-sm bt_dahuaAddAction" data-container="div_dahuaRuleActions"><i class="fas fa-plus-circle"></i> {{Ajouter une action}}</a>
+								<span class="help-block" style="margin:5px 0 0 0;">{{La commande « Déclenchée » change d'état dans tous les cas : ces actions ne sont utiles que si vous voulez éviter d'écrire un scénario.}}</span>
+							</div>
+						</div>
+
+						<legend><i class="fas fa-undo"></i> {{Actions au retour au repos}}</legend>
+						<div class="form-group">
+							<div class="col-sm-offset-1 col-sm-10">
+								<div id="div_dahuaRuleActionsEnd"></div>
+								<a class="btn btn-default btn-sm bt_dahuaAddAction" data-container="div_dahuaRuleActionsEnd"><i class="fas fa-plus-circle"></i> {{Ajouter une action}}</a>
+								<span class="help-block" style="margin:5px 0 0 0;">{{Jouées à la fin de la durée de maintien. Sur une installation calme, le retour au repos peut prendre jusqu'à une minute de plus : il est vérifié à chaque détection reçue, et à défaut une fois par minute.}}</span>
+							</div>
+						</div>
+
+						<legend><i class="fas fa-vial"></i> {{Mise au point}}</legend>
+
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{État}}</label>
+							<div class="col-sm-8">
+								<span id="span_dahuaRuleState" class="label label-default" style="display:none;"></span>
+								<span id="span_dahuaRuleDetail" class="help-block" style="margin:5px 0 0 0;"></span>
+							</div>
+						</div>
+						<div class="form-group">
+							<div class="col-sm-offset-3 col-sm-8">
+								<a class="btn btn-info" id="bt_dahuaTestRule"><i class="fas fa-vial"></i> {{Tester la règle}}</a>
+								<a class="btn btn-default" id="bt_dahuaResetRule"><i class="fas fa-undo"></i> {{Réinitialiser}}</a>
+								<span class="help-block" style="margin:5px 0 0 0;">{{« Tester » joue le déclenchement pour de vrai, actions comprises, et démarre la temporisation. « Réinitialiser » remet la règle au repos, joue les actions de retour et oublie les détections en attente.}}</span>
 							</div>
 						</div>
 					</fieldset>
