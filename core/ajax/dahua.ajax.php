@@ -85,11 +85,10 @@ try {
 
     if (init('action') == 'snapshot') {
         $cam = $getDahua(init('id'), dahua::TYPE_CAMERA);
-        $url = $cam->takeSnapshot();
-        if ($url === false) {
-            throw new Exception(__('Capture impossible. Vérifiez le canal et les identifiants du NVR.', __FILE__));
-        }
-        ajax::success(array('url' => $url));
+        // takeSnapshot() lève une exception portant la cause exacte : le message
+        // générique précédent envoyait vérifier des identifiants corrects alors que
+        // la caméra était simplement hors ligne.
+        ajax::success(array('url' => $cam->takeSnapshot()));
     }
 
     if (init('action') == 'daemonStatus') {

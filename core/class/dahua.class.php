@@ -324,7 +324,7 @@ class dahua extends eqLogic {
     }
 
     /* Requête HTTP CGI authentifiée en Digest sur le NVR. */
-    public static function cgiRequest($_nvr, $_path, $_binary = false, $_timeout = 10) {
+    public static function cgiRequest($_nvr, $_path, $_binary = false, $_timeout = 10, &$_detail = null) {
         // Le port HTTP est distinct du port DHIP : sur certains firmwares le
         // protocole binaire n'écoute pas sur 80.
         $port = (int) $_nvr->getConfiguration('http_port', 80);
@@ -344,6 +344,8 @@ class dahua extends eqLogic {
         $error  = curl_error($ch);
         curl_close($ch);
 
+        $_detail = array('code' => $code, 'curl' => $error);
+
         if ($result === false || $code != 200) {
             log::add(__CLASS__, 'error', __('Requête CGI en échec :', __FILE__) . ' ' . $url
                    . ' (HTTP ' . $code . ($error != '' ? ' / ' . $error : '') . ')');
@@ -354,6 +356,31 @@ class dahua extends eqLogic {
             return false;
         }
         return $result;
+    }
+
+    /*
+     * Traduit un échec de requête CGI en cause probable.
+     * Le NVR répond « Bad Request » quand il ne peut pas servir un canal, ce qui
+     * arrive surtout lorsque la caméra ne lui fournit plus de flux — cas qu'il ne
+     * faut pas confondre avec une erreur de configuration.
+     */
+    public static function describeCgiFailure($_detail, $_what = '') {
+        $code = isset($_detail['code']) ? (int) $_detail['code'] : 0;
+        switch ($code) {
+            case 0:
+                return __('Le NVR est injoignable. Vérifiez son adresse, son port HTTP et le réseau.', __FILE__)
+                     . (isset($_detail['curl']) && $_detail['curl'] != '' ? ' (' . $_detail['curl'] . ')' : '');
+            case 401:
+            case 403:
+                return __('Le NVR a refusé les identifiants.', __FILE__);
+            case 400:
+                return __('Le NVR ne peut pas servir ce canal.', __FILE__) . ' '
+                     . __('La caméra est probablement hors ligne ou ne fournit plus de flux : vérifiez-la dans l\'interface du NVR.', __FILE__)
+                     . ($_what != '' ? ' (' . $_what . ')' : '');
+            case 404:
+                return __('Ce NVR ne propose pas cette fonction.', __FILE__);
+        }
+        return __('Le NVR a répondu HTTP', __FILE__) . ' ' . $code . '.';
     }
 
     /* ====================================================== CYCLE DE VIE eqLogic */
@@ -608,10 +635,11 @@ class dahua extends eqLogic {
         // Vérifié sur NVR4108 : ptz.cgi et snapshot.cgi attendent un canal 1-based,
         // contrairement à l'Index des événements qui part de 0.
         $channel = (int) $this->getConfiguration('channel');
+        $detail = array();
         $result = self::cgiRequest($nvr, 'ptz.cgi?action=start&channel=' . $channel
-                . '&code=GotoPreset&arg1=0&arg2=' . (int) $_preset . '&arg3=0');
+                . '&code=GotoPreset&arg1=0&arg2=' . (int) $_preset . '&arg3=0', false, 10, $detail);
         if ($result === false) {
-            throw new Exception(__('Le NVR a refusé la commande PTZ', __FILE__));
+            throw new Exception(self::describeCgiFailure($detail, __('canal', __FILE__) . ' ' . $channel));
         }
         return true;
     }
@@ -659,29 +687,33 @@ class dahua extends eqLogic {
 
     public function takeSnapshot() {
         if ($this->getConfiguration('type') != self::TYPE_CAMERA) {
-            return false;
+            throw new Exception(__('La capture ne s\'applique qu\'à une caméra.', __FILE__));
         }
         $nvr = $this->getNvr();
         if (!is_object($nvr)) {
-            return false;
+            throw new Exception(__('NVR parent introuvable : rattachez la caméra à un NVR.', __FILE__));
         }
         $channel = (int) $this->getConfiguration('channel');
-        $image = self::cgiRequest($nvr, 'snapshot.cgi?channel=' . $channel, true, 15);
+        $detail = array();
+        $image = self::cgiRequest($nvr, 'snapshot.cgi?channel=' . $channel, true, 15, $detail);
+        if ($image === false) {
+            throw new Exception(self::describeCgiFailure($detail, __('canal', __FILE__) . ' ' . $channel));
+        }
         // Le NVR répond parfois 200 avec un message d'erreur en texte : on exige la
         // signature JPEG plutôt que de se fier au code HTTP.
-        if ($image === false || strlen($image) < 1024 || substr($image, 0, 2) !== "\xFF\xD8") {
-            return false;
+        if (strlen($image) < 1024 || substr($image, 0, 2) !== "\xFF\xD8") {
+            throw new Exception(__('Le NVR a répondu, mais sans image exploitable pour ce canal.', __FILE__));
         }
 
         $dir = self::snapshotDir();
         if ($dir === false) {
-            return false;
+            throw new Exception(__('Dossier de captures inaccessible, consultez le log.', __FILE__));
         }
         // gmdate des deux côtés : le démon tourne en UTC, le tri par nom doit rester
         // cohérent quel que soit le fuseau du process qui a écrit le fichier.
         $file = 'cam' . $this->getId() . '_' . gmdate('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
         if (file_put_contents($dir . '/' . $file, $image) === false) {
-            return false;
+            throw new Exception(__('Écriture de la capture impossible dans', __FILE__) . ' ' . $dir);
         }
         $this->purgeSnapshots($dir);
 
@@ -757,11 +789,8 @@ class dahuaCmd extends cmd {
 
         switch ($this->getLogicalId()) {
             case 'take_snapshot':
-                $url = $eqLogic->takeSnapshot();
-                if ($url === false) {
-                    throw new Exception(__('Capture impossible, consultez les logs', __FILE__));
-                }
-                return $url;
+                // takeSnapshot() lève une exception détaillant la cause d'un échec.
+                return $eqLogic->takeSnapshot();
 
             case 'ptz_preset':
                 // Le preset est une propriété de l'équipement, pas de la commande.

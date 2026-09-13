@@ -13,8 +13,6 @@
         "Le NVR a refusé la requête :": "The NVR rejected the request:",
         "Le PTZ ne s'applique qu'à une caméra": "PTZ only applies to a camera",
         "NVR parent introuvable": "Parent NVR not found",
-        "Le NVR a refusé la commande PTZ": "The NVR rejected the PTZ command",
-        "Capture impossible, consultez les logs": "Snapshot failed, check the logs",
         "Mouvement": "Motion",
         "Humain détecté": "Human detected",
         "Véhicule détecté": "Vehicle detected",
@@ -65,7 +63,19 @@
         "Sirène ON": "Siren ON",
         "Sirène OFF": "Siren OFF",
         "Sortie alarme ON": "Alarm output ON",
-        "Sortie alarme OFF": "Alarm output OFF"
+        "Sortie alarme OFF": "Alarm output OFF",
+        "Le NVR est injoignable. Vérifiez son adresse, son port HTTP et le réseau.": "The NVR is unreachable. Check its address, HTTP port and the network.",
+        "Le NVR a refusé les identifiants.": "The NVR rejected the credentials.",
+        "Le NVR ne peut pas servir ce canal.": "The NVR cannot serve this channel.",
+        "La caméra est probablement hors ligne ou ne fournit plus de flux : vérifiez-la dans l'interface du NVR.": "The camera is most likely offline or no longer sending a stream: check it in the NVR interface.",
+        "Ce NVR ne propose pas cette fonction.": "This NVR does not provide that function.",
+        "Le NVR a répondu HTTP": "The NVR replied HTTP",
+        "canal": "channel",
+        "Le NVR a répondu, mais sans image exploitable pour ce canal.": "The NVR replied, but with no usable image for this channel.",
+        "La capture ne s'applique qu'à une caméra.": "Snapshots only apply to a camera.",
+        "NVR parent introuvable : rattachez la caméra à un NVR.": "Parent NVR not found: attach the camera to an NVR.",
+        "Dossier de captures inaccessible, consultez le log.": "Snapshot folder is not accessible, check the log.",
+        "Écriture de la capture impossible dans": "Cannot write the snapshot into"
     },
     "plugins/dahua/core/php/jeeDahua.php": {
         "Vous n'êtes pas autorisé à effectuer cette action": "You are not authorized to perform this action",
@@ -80,7 +90,6 @@
         "401 - Accès non autorisé": "401 - Unauthorized access",
         "Équipement introuvable": "Device not found",
         "Cette action ne s'applique qu'à un NVR": "This action only applies to an NVR",
-        "Capture impossible. Vérifiez le canal et les identifiants du NVR.": "Snapshot failed. Check the channel and the NVR credentials.",
         "Aucune méthode correspondante à :": "No method matching:",
         "Cette action ne s'applique qu'à une caméra": "This action only applies to a camera",
         "Le NVR ne répond pas. Vérifiez l'adresse, le port HTTP et les identifiants.": "The NVR is not responding. Check the address, the HTTP port and the credentials."

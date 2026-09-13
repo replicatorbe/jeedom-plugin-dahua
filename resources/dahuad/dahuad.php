@@ -1275,7 +1275,14 @@ class DahuaDaemon {
         // Le NVR répond parfois 200 avec un message d'erreur en texte : on exige
         // la signature JPEG plutôt que de se fier au code HTTP.
         if ($image === false || $code != 200 || strlen($image) < 1024 || substr($image, 0, 2) !== "\xFF\xD8") {
-            DahuaLog::warning('capture refusée par le NVR (canal ' . $_channel . ', HTTP ' . $code . ')');
+            /*
+             * HTTP 400 sur un canal précis : le NVR ne peut pas le servir, presque
+             * toujours parce que la caméra ne lui fournit plus de flux.
+             */
+            $cause = ($code == 400)
+                   ? 'caméra probablement hors ligne'
+                   : ($code == 401 ? 'identifiants refusés' : 'HTTP ' . $code);
+            DahuaLog::warning('capture impossible sur le canal ' . $_channel . ' : ' . $cause);
             return false;
         }
 
