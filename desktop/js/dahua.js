@@ -200,7 +200,7 @@ function dahuaUpdateSummary() {
   if (target === null) {
     return
   }
-  var parts = []
+  var rows = []
   document.querySelectorAll('#table_dahuaConditions tbody tr.dahuaRuleCondition').forEach(function (row) {
     var source = row.querySelector('.ruleAttr[data-l1key="source"]')
     var event = row.querySelector('.ruleAttr[data-l1key="event"]')
@@ -208,15 +208,21 @@ function dahuaUpdateSummary() {
     if (source === null || event === null || source.value === '' || event.value === '') {
       return
     }
-    var label = event.options[event.selectedIndex].text + ' / ' + source.options[source.selectedIndex].text
-    var times = parseInt(min.value, 10)
-    if (times > 1) {
-      label += ' × ' + times
-    }
-    parts.push(label)
+    rows.push({
+      source: source.value,
+      sourceLabel: source.options[source.selectedIndex].text,
+      eventLabel: event.options[event.selectedIndex].text,
+      min: parseInt(min.value, 10) || 1
+    })
   })
 
-  if (parts.length === 0) {
+  var hint = document.getElementById('span_dahuaScopeHint')
+  if (hint !== null) {
+    hint.textContent = ''
+    hint.className = 'help-block'
+  }
+
+  if (rows.length === 0) {
     target.className = 'help-block text-danger'
     target.textContent = '{{Aucune condition complète : cette règle ne se déclenchera jamais.}}'
     return
@@ -226,6 +232,44 @@ function dahuaUpdateSummary() {
     var el = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="' + key + '"]')
     return (el === null || el.value === '') ? fallback : el.value
   }
+  var scope = value('camera_scope', 'any')
+
+  /* Caméras explicitement nommées dans les conditions : c'est leur nombre qui
+     décide si le réglage de provenance est utile, inutile ou contradictoire. */
+  var named = []
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].source !== 'any' && named.indexOf(rows[i].source) === -1) {
+      named.push(rows[i].source)
+    }
+  }
+  var allNamed = true
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].source === 'any') { allNamed = false }
+  }
+
+  /* Deux combinaisons rendent la règle définitivement muette. Sans ce contrôle
+     elle s'enregistre sans broncher et ne se déclenche jamais — le genre de
+     panne qu'on ne découvre que le jour où on en avait besoin. */
+  if (scope === 'same' && named.length > 1) {
+    target.className = 'help-block text-danger'
+    target.textContent = '{{Cette règle ne pourra jamais se déclencher : elle exige que toutes les détections viennent d\'une seule et même caméra, alors que vos conditions en désignent plusieurs. Choisissez « de n\'importe quelles caméras », ou « d\'au moins deux caméras différentes ».}}'
+    return
+  }
+  if (scope === 'distinct' && allNamed && named.length === 1) {
+    target.className = 'help-block text-danger'
+    target.textContent = '{{Cette règle ne pourra jamais se déclencher : elle exige au moins deux caméras différentes, alors que toutes vos conditions désignent la même.}}'
+    return
+  }
+
+  var parts = []
+  for (i = 0; i < rows.length; i++) {
+    var label = rows[i].eventLabel + ' / ' + rows[i].sourceLabel
+    if (rows[i].min > 1) {
+      label += ' × ' + rows[i].min
+    }
+    parts.push(label)
+  }
+
   var mode = document.getElementById('sel_dahuaRuleMode')
   var text = '{{Déclenchement quand}} '
   if (mode !== null && mode.value === 'count') {
@@ -233,23 +277,34 @@ function dahuaUpdateSummary() {
   } else {
     text += parts.join(' {{ET}} ')
   }
-  var scope = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="camera_scope"]')
-  if (scope !== null && scope.value === 'same') {
-    text += ', {{sur une seule et même caméra}}'
-  } else if (scope !== null && scope.value === 'distinct') {
-    text += ', {{réparties sur au moins deux caméras}}'
+  if (scope === 'same') {
+    text += ', {{le tout sur une seule et même caméra}}'
+  } else if (scope === 'distinct') {
+    text += ', {{réparties sur au moins deux caméras différentes}}'
   }
   text += ', {{en moins de}} ' + value('window', '15') + ' {{secondes}}.'
 
   /* Une seule condition à une occurrence n'est pas une détection croisée : le
      dire, plutôt que de laisser croire à une protection qui n'existe pas. */
-  if (parts.length === 1 && parts[0].indexOf('×') === -1) {
+  if (rows.length === 1 && rows[0].min === 1 && scope !== 'distinct') {
     target.className = 'help-block text-warning'
     text += ' {{Attention : une seule détection suffit, ce n\'est pas une double détection.}}'
   } else {
     target.className = 'help-block text-info'
   }
   target.textContent = text
+
+  /* Dire à quoi sert le réglage de provenance DANS CE CAS précis : c'est le
+     champ le moins intuitif de l'écran. */
+  if (hint !== null) {
+    if (allNamed && named.length === rows.length) {
+      hint.className = 'help-block text-muted'
+      hint.textContent = '{{Ici, ce réglage ne change presque rien : chaque condition désigne déjà une caméra précise.}}'
+    } else {
+      hint.className = 'help-block text-info'
+      hint.textContent = '{{Ici, ce réglage est déterminant : au moins une de vos conditions accepte n\'importe quelle caméra.}}'
+    }
+  }
 }
 
 /* Modèles de règles : de quoi ne pas partir d'une page blanche. */

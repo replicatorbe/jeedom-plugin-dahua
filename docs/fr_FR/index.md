@@ -291,14 +291,40 @@ détections distinctes, pas un unique mouvement qui coche les deux cases.
 Le second mode sert à écrire « deux détections parmi ces quatre », sans imposer
 lesquelles.
 
-**Caméras concernées** est le réglage le plus important :
+### « Les détections doivent venir… » — le champ à comprendre
 
-- *Peu importe lesquelles* — aucune contrainte ;
-- *Toutes sur la même caméra* — c'est la double détection locale, celle qui
-  élimine les faux positifs d'un point de vue précis ;
-- *Sur au moins deux caméras différentes* — c'est la corroboration : quelqu'un
-  qui traverse le jardin est vu par deux caméras, une ombre ne l'est pas. La
-  répétition sur un seul canal n'y suffit jamais.
+C'est le réglage le moins intuitif de l'écran, et le plus important. Il ne fait
+pas la même chose que la colonne « Sur quelle caméra ».
+
+- La **colonne du tableau** dit *d'où une détection a le droit de venir*. C'est
+  un filtre, appliqué ligne par ligne.
+- Ce **champ-ci** dit *si les détections retenues doivent venir du même endroit*.
+  Ce n'est pas un filtre : c'est une contrainte sur le **lien entre elles**.
+
+Trois valeurs :
+
+- *de n'importe quelles caméras* — aucune contrainte de provenance ;
+- *toutes d'une seule et même caméra* — la double détection locale. « Ligne
+  franchie » + « Mouvement », caméra laissée sur *n'importe laquelle* : la règle
+  se déclenche dès qu'une caméra, n'importe laquelle, voit les deux. C'est ce
+  qui élimine les faux positifs d'un point de vue précis ;
+- *d'au moins deux caméras différentes* — la corroboration. Quelqu'un qui
+  traverse le jardin est vu par deux caméras, une ombre ne l'est pas. La
+  répétition sur une seule caméra n'y suffit jamais.
+
+C'est ce champ qui fait tout le travail du modèle **Intrusion corroborée** :
+cette règle n'a qu'une seule condition, « n'importe quelle détection, 2 fois ».
+Prise seule, deux mouvements de la même caméra la satisferaient. Réglée sur
+*d'au moins deux caméras différentes*, elle exige deux caméras distinctes.
+
+À l'inverse, si vous nommez une caméra précise sur chaque ligne, ce champ ne
+change presque rien — la provenance est déjà décidée. La page vous le dit sous
+le menu déroulant.
+
+Deux combinaisons rendent la règle **définitivement muette**, et la page les
+signale en rouge avant que vous n'enregistriez : exiger *une seule et même
+caméra* alors que les conditions en nomment plusieurs, ou exiger *deux caméras
+différentes* alors qu'elles nomment toutes la même.
 
 ### Les délais
 

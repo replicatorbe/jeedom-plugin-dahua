@@ -334,8 +334,8 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 									<table id="table_dahuaConditions" class="table table-bordered table-condensed">
 										<thead>
 											<tr>
-												<th style="width:40%;">{{Caméra}}</th>
-												<th style="width:40%;">{{Détection}}</th>
+												<th style="width:40%;">{{Sur quelle caméra}}</th>
+												<th style="width:40%;">{{Quelle détection}}</th>
 												<th style="width:12%;">{{Fois}}</th>
 												<th style="width:8%;"></th>
 											</tr>
@@ -376,16 +376,18 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 						</div>
 
 						<div class="form-group">
-							<label class="col-sm-3 control-label">{{Caméras concernées}}</label>
+							<label class="col-sm-3 control-label">{{Les détections doivent venir}}</label>
 							<div class="col-sm-4">
 								<select class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="camera_scope">
-									<option value="any">{{Peu importe lesquelles}}</option>
-									<option value="same">{{Toutes sur la même caméra}}</option>
-									<option value="distinct">{{Sur au moins deux caméras différentes}}</option>
+									<option value="any">{{de n'importe quelles caméras}}</option>
+									<option value="same">{{toutes d'une seule et même caméra}}</option>
+									<option value="distinct">{{d'au moins deux caméras différentes}}</option>
 								</select>
 							</div>
 							<div class="col-sm-5">
-								<span class="help-block" style="margin:0;">{{« La même caméra » est la double détection locale ; « deux caméras différentes » est la corroboration, la répétition sur un seul canal n'y suffit pas.}}</span>
+								<span class="help-block" style="margin:0;">{{Le tableau ci-dessus dit d'où chaque détection a le droit de venir. Ce champ-ci dit si elles doivent en plus venir du même endroit, ou au contraire d'endroits différents.}}</span>
+								<span class="help-block" style="margin:5px 0 0 0;">{{Exemple : « Ligne franchie » + « Mouvement », n'importe quelle caméra, « d'une seule et même caméra » — la règle se déclenche dès qu'une caméra, n'importe laquelle, voit les deux. C'est la double détection.}}</span>
+								<span id="span_dahuaScopeHint" class="help-block" style="margin:5px 0 0 0;"></span>
 							</div>
 						</div>
 

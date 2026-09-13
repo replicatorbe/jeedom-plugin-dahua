@@ -231,7 +231,15 @@
         "Rôdeur": "Loitering",
         "Anomalie sonore": "Audio anomaly",
         "Variation sonore": "Audio change",
-        "Détection incendie": "Fire detected"
+        "Détection incendie": "Fire detected",
+        "Sur quelle caméra": "On which camera",
+        "Quelle détection": "Which detection",
+        "Les détections doivent venir": "The detections must come",
+        "de n'importe quelles caméras": "from any cameras",
+        "toutes d'une seule et même caméra": "all from one and the same camera",
+        "d'au moins deux caméras différentes": "from at least two different cameras",
+        "Le tableau ci-dessus dit d'où chaque détection a le droit de venir. Ce champ-ci dit si elles doivent en plus venir du même endroit, ou au contraire d'endroits différents.": "The table above says where each detection is allowed to come from. This field says whether they must also come from the same place, or on the contrary from different ones.",
+        "Exemple : « Ligne franchie » + « Mouvement », n'importe quelle caméra, « d'une seule et même caméra » — la règle se déclenche dès qu'une caméra, n'importe laquelle, voit les deux. C'est la double détection.": "Example: “Line crossed” + “Motion”, any camera, “from one and the same camera” — the rule triggers as soon as any single camera sees both. That is double detection."
     },
     "plugins/dahua/desktop/js/dahua.js": {
         "Enregistrez d'abord l'équipement.": "Save the device first.",
@@ -288,7 +296,15 @@
         "Ce bloc n'est pas utilisable dans une règle : il bloquerait la réception des événements ou n'a de sens que dans un scénario. Passez par un scénario.": "This block cannot be used in a rule: it would block event reception, or it only makes sense inside a scenario. Use a scenario instead.",
         "Ce bloc n\\'est pas utilisable dans une règle : il bloquerait la réception des événements ou n\\'a de sens que dans un scénario. Passez par un scénario.": "This block cannot be used in a rule: it would block event reception, or it only makes sense inside a scenario. Use a scenario instead.",
         "Règle déclenchée, les actions ont été jouées": "Rule triggered, the actions were played",
-        "Règle remise au repos.": "Rule returned to idle."
+        "Règle remise au repos.": "Rule returned to idle.",
+        "Cette règle ne pourra jamais se déclencher : elle exige que toutes les détections viennent d'une seule et même caméra, alors que vos conditions en désignent plusieurs. Choisissez « de n'importe quelles caméras », ou « d'au moins deux caméras différentes ».": "This rule can never trigger: it requires all detections to come from one and the same camera, while your conditions name several. Pick “from any cameras”, or “from at least two different cameras”.",
+        "Cette règle ne pourra jamais se déclencher : elle exige que toutes les détections viennent d\\'une seule et même caméra, alors que vos conditions en désignent plusieurs. Choisissez « de n\\'importe quelles caméras », ou « d\\'au moins deux caméras différentes ».": "This rule can never trigger: it requires all detections to come from one and the same camera, while your conditions name several. Pick “from any cameras”, or “from at least two different cameras”.",
+        "Cette règle ne pourra jamais se déclencher : elle exige au moins deux caméras différentes, alors que toutes vos conditions désignent la même.": "This rule can never trigger: it requires at least two different cameras, while all your conditions name the same one.",
+        "le tout sur une seule et même caméra": "all on one and the same camera",
+        "réparties sur au moins deux caméras différentes": "spread over at least two different cameras",
+        "Ici, ce réglage ne change presque rien : chaque condition désigne déjà une caméra précise.": "Here this setting changes almost nothing: each condition already names a specific camera.",
+        "Ici, ce réglage est déterminant : au moins une de vos conditions accepte n'importe quelle caméra.": "Here this setting is decisive: at least one of your conditions accepts any camera.",
+        "Ici, ce réglage est déterminant : au moins une de vos conditions accepte n\\'importe quelle caméra.": "Here this setting is decisive: at least one of your conditions accepts any camera."
     },
     "plugins/dahua/plugin_info/configuration.php": {
         "Démon": "Daemon",

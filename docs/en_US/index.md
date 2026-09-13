@@ -285,14 +285,38 @@ motion ticking both boxes.
 **Requires** chooses between *all the conditions* and *at least N of them*. The
 second mode expresses "two detections among these four" without saying which.
 
-**Cameras involved** is the most important setting:
+### "The detections must come…" — the field to understand
 
-- *Any of them* — no constraint;
-- *All on the same camera* — local double detection, the one that removes false
-  positives from a single viewpoint;
-- *On at least two different cameras* — corroboration: someone crossing the
-  garden is seen by two cameras, a shadow is not. Repetition on a single channel
+This is the least intuitive setting on the screen, and the most important. It
+does not do the same thing as the "On which camera" column.
+
+- The **table column** says *where a detection is allowed to come from*. It is a
+  filter, applied row by row.
+- **This field** says *whether the retained detections must come from the same
+  place*. It is not a filter: it constrains the **relationship between them**.
+
+Three values:
+
+- *from any cameras* — no constraint on origin;
+- *all from one and the same camera* — local double detection. "Line crossed" +
+  "Motion", camera left on *any*: the rule triggers as soon as any single camera
+  sees both. This is what removes false positives from one viewpoint;
+- *from at least two different cameras* — corroboration. Someone crossing the
+  garden is seen by two cameras, a shadow is not. Repetition on a single camera
   is never enough.
+
+This field does all the work in the **Corroborated intrusion** template: that
+rule has a single condition, "any detection, 2 times". On its own, two motions
+from the same camera would satisfy it. Set to *from at least two different
+cameras*, it requires two distinct cameras.
+
+Conversely, if you name a specific camera on every row, this field changes almost
+nothing — the origin is already decided. The page says so under the dropdown.
+
+Two combinations make the rule **permanently silent**, and the page flags them in
+red before you save: requiring *one and the same camera* while the conditions
+name several, or requiring *two different cameras* while they all name the same
+one.
 
 ### Delays
 
