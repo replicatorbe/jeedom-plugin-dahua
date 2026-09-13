@@ -147,6 +147,10 @@ class dahua extends eqLogic {
             sleep(1);
         }
         log::add(__CLASS__, 'error', __('Impossible de lancer le démon, consultez le log dahuad', __FILE__), 'unableStartDeamon');
+        /* log::add ne pose un message qu'avec le réglage global addMessageForErrorLog,
+         * inactif par défaut : sans ce message::add, un démon qui refuse de démarrer
+         * (identifiants faux, port occupé) ne se voit que dans l'onglet Santé. */
+        message::add(__CLASS__, __('Impossible de lancer le démon, consultez le log dahuad', __FILE__), '', 'unableStartDeamon');
         return false;
     }
 
