@@ -291,6 +291,7 @@
         "Attention : une seule détection suffit, ce n'est pas une double détection.": "Careful: a single detection is enough, this is not a double detection.",
         "Attention : une seule détection suffit, ce n\\'est pas une double détection.": "Careful: a single detection is enough, this is not a double detection.",
         "Le modèle va remplacer les conditions déjà saisies. Continuer ?": "The template will replace the conditions already entered. Continue?",
+        "Le test joue réellement les actions de la règle (éclairage, sirène, notifications). Continuer ?": "The test really plays the rule actions (lighting, siren, notifications). Continue?",
         "Déclenchée": "Triggered",
         "Au repos": "Idle",
         "Dernier déclenchement": "Last trigger",

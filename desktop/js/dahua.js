@@ -845,6 +845,11 @@ dahuaContainer.addEventListener('click', function (event) {
     if (!dahuaCheckSaved()) { return }
     var ruleId = dahuaCurrentId()
     if (ruleId === null) { return }
+    /* Le test rejoue le déclenchement complet, actions comprises : éclairage,
+       sirène, notifications. Un clic d'exploration réveille la maison. */
+    if (!window.confirm('{{Le test joue réellement les actions de la règle (éclairage, sirène, notifications). Continuer ?}}')) {
+      return
+    }
     dahuaAjax('testRule', { id: ruleId }, function (result) {
       jeedomUtils.showAlert({
         message: '{{Règle déclenchée, les actions ont été jouées}} : ' + init(result.detail, ''),
