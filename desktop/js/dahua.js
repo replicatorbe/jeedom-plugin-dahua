@@ -261,13 +261,26 @@ function dahuaUpdateSummary() {
     return
   }
 
-  var parts = []
+  /* Deux lignes identiques n'exigent pas « deux fois la même condition » mais
+     deux détections distinctes : une détection ne peut en satisfaire qu'une.
+     On les fusionne dans le résumé, sinon le libellé répète la même phrase et
+     laisse croire à une double détection alors qu'il n'y en a qu'une. */
+  var merged = []
   for (i = 0; i < rows.length; i++) {
-    var label = rows[i].eventLabel + ' / ' + rows[i].sourceLabel
-    if (rows[i].min > 1) {
-      label += ' × ' + rows[i].min
+    var key = rows[i].source + '|' + rows[i].eventLabel
+    var found = null
+    for (var k = 0; k < merged.length; k++) {
+      if (merged[k].key === key) { found = merged[k] }
     }
-    parts.push(label)
+    if (found === null) {
+      merged.push({ key: key, label: rows[i].eventLabel + ' / ' + rows[i].sourceLabel, count: rows[i].min })
+    } else {
+      found.count += rows[i].min
+    }
+  }
+  var parts = []
+  for (i = 0; i < merged.length; i++) {
+    parts.push(merged[i].label + (merged[i].count > 1 ? ' × ' + merged[i].count : ''))
   }
 
   var mode = document.getElementById('sel_dahuaRuleMode')
@@ -286,11 +299,15 @@ function dahuaUpdateSummary() {
 
   /* Une seule condition à une occurrence n'est pas une détection croisée : le
      dire, plutôt que de laisser croire à une protection qui n'existe pas. */
-  if (rows.length === 1 && rows[0].min === 1 && scope !== 'distinct') {
+  if (merged.length === 1 && merged[0].count === 1 && scope !== 'distinct') {
     target.className = 'help-block text-warning'
     text += ' {{Attention : une seule détection suffit, ce n\'est pas une double détection.}}'
   } else {
     target.className = 'help-block text-info'
+    if (merged.length === 1 && merged[0].count > 1) {
+      text += ' {{Ce n\'est pas une détection croisée : il faudra plusieurs fois la même détection.}}'
+      target.className = 'help-block text-warning'
+    }
   }
   target.textContent = text
 

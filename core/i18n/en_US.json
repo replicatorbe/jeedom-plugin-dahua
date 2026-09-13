@@ -305,7 +305,9 @@
         "réparties sur au moins deux caméras différentes": "spread over at least two different cameras",
         "Ici, ce réglage ne change presque rien : chaque condition désigne déjà une caméra précise.": "Here this setting changes almost nothing: each condition already names a specific camera.",
         "Ici, ce réglage est déterminant : au moins une de vos conditions accepte n'importe quelle caméra.": "Here this setting is decisive: at least one of your conditions accepts any camera.",
-        "Ici, ce réglage est déterminant : au moins une de vos conditions accepte n\\'importe quelle caméra.": "Here this setting is decisive: at least one of your conditions accepts any camera."
+        "Ici, ce réglage est déterminant : au moins une de vos conditions accepte n\\'importe quelle caméra.": "Here this setting is decisive: at least one of your conditions accepts any camera.",
+        "Ce n'est pas une détection croisée : il faudra plusieurs fois la même détection.": "This is not a cross detection: it will require the same detection several times.",
+        "Ce n\\'est pas une détection croisée : il faudra plusieurs fois la même détection.": "This is not a cross detection: it will require the same detection several times."
     },
     "plugins/dahua/plugin_info/configuration.php": {
         "Démon": "Daemon",
@@ -355,6 +357,7 @@
         "action ignorée, elle vise la règle elle-même :": "action ignored, it targets the rule itself:",
         "Cette règle est désactivée : réactivez-la pour la tester.": "This rule is disabled: enable it again to test it.",
         "Test manuel": "Manual test",
-        "Déclenchement refusé :": "Trigger refused:"
+        "Déclenchement refusé :": "Trigger refused:",
+        "Cette règle n'a aucune condition complète : elle ne se déclencherait jamais d'elle-même. Choisissez une caméra et une détection sur chaque ligne avant de tester.": "This rule has no complete condition: it would never trigger on its own. Pick a camera and a detection on every row before testing."
     }
 }

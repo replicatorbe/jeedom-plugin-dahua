@@ -604,6 +604,14 @@ class dahuaRule {
         if ($_rule->getIsEnable() != 1) {
             throw new Exception(__('Cette règle est désactivée : réactivez-la pour la tester.', __FILE__));
         }
+        /*
+         * Le test court-circuite l'évaluation des conditions — c'est son rôle,
+         * il sert à vérifier les actions. Mais répondre « déclenchée » sur une
+         * règle qui ne pourra jamais l'être d'elle-même serait mensonger.
+         */
+        if (count(self::conditions($_rule)) == 0) {
+            throw new Exception(__('Cette règle n\'a aucune condition complète : elle ne se déclencherait jamais d\'elle-même. Choisissez une caméra et une détection sur chaque ligne avant de tester.', __FILE__));
+        }
         $state = self::state($_rule->getId());
         // Les détections déjà accumulées sont préservées : tester une règle ne
         // doit pas effacer une corrélation réelle en cours.

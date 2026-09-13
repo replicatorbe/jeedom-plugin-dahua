@@ -17,6 +17,14 @@
 
 try {
     require_once __DIR__ . '/../../../../core/php/core.inc.php';
+    /*
+     * L'autochargeur de Jeedom ne sait résoudre que la classe portant le nom du
+     * plugin : dahuaRule lui est inconnue, et c'est dahua.class.php qui
+     * l'inclut. Sans ce require, un appel statique à dahuaRule échoue sur
+     * « Class not found » dès qu'aucune ligne précédente n'a chargé dahua —
+     * PHP résout la classe d'un appel statique AVANT d'évaluer ses arguments.
+     */
+    require_once __DIR__ . '/../class/dahua.class.php';
     include_file('core', 'authentification', 'php');
 
     if (!isConnect('admin')) {
@@ -108,7 +116,8 @@ try {
 
     if (init('action') == 'resetRule') {
         unautorizedInDemo();
-        dahuaRule::reset($getDahua(init('id'), dahua::TYPE_RULE));
+        $rule = $getDahua(init('id'), dahua::TYPE_RULE);
+        dahuaRule::reset($rule);
         ajax::success(true);
     }
 
