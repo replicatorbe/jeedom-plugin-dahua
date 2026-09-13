@@ -35,6 +35,13 @@
   (cleared cache, restored backup) no longer leaves it stuck.
 - An action targeting a command of the rule itself is ignored rather than looping.
 - An NVR clock running ahead can no longer freeze the correlation window.
+- A sentence below the table summarises in plain words what the rule will do,
+  flags combinations that could never trigger, and warns when a single detection
+  would be enough.
+- A rule saved without a usable condition raises a message, and "Test" refuses it
+  rather than announcing a misleading trigger.
+- A condition row whose camera or detection was not picked is ignored: a rule
+  left empty does not fire on the first motion that comes along.
 
 **Fix**
 

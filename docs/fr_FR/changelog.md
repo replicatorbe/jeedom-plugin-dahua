@@ -40,6 +40,13 @@
 - Une action qui viserait une commande de la règle elle-même est ignorée plutôt
   que de la relancer en boucle.
 - Une horloge de NVR en avance ne peut plus figer la fenêtre de corrélation.
+- Une phrase sous le tableau récapitule en clair ce que la règle fera, signale
+  les combinaisons qui ne pourraient jamais se déclencher, et prévient quand une
+  seule détection suffirait.
+- Une règle enregistrée sans condition exploitable est signalée par un message,
+  et « Tester » la refuse plutôt que d'annoncer un déclenchement trompeur.
+- Une ligne de condition dont la caméra ou la détection n'a pas été choisie est
+  ignorée : une règle laissée vide ne se déclenche pas au premier mouvement venu.
 
 **Correctif**
 
