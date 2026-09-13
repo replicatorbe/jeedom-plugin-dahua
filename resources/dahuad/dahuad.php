@@ -101,6 +101,7 @@ abstract class DahuaTransport {
     protected $lastActivity = 0;
     private $nextRetry = 0;
     private $failures = 0;
+    private $connectFailures = 0;
 
     public function __construct($_config) {
         $this->config = $_config;
@@ -140,6 +141,7 @@ abstract class DahuaTransport {
     public function scheduleRetry($_base, $_reset = false) {
         if ($_reset) {
             $this->failures = 0;
+            $this->connectFailures = 0;
             $this->nextRetry = time();
             return;
         }
@@ -152,6 +154,26 @@ abstract class DahuaTransport {
 
     public function failureCount() {
         return $this->failures;
+    }
+
+    /*
+     * Compteur distinct de $failures, qui sert au backoff et que dropClient()
+     * incrémente déjà avant même la première tentative de reconnexion : s'en
+     * servir pour décider du repli faisait changer de transport dès la première
+     * connexion ratée, sur une simple coupure passagère du NVR.
+     */
+    public function noteConnectFailure() {
+        return ++$this->connectFailures;
+    }
+
+    /*
+     * Reprend le rythme de tentatives du transport remplacé : sans cela une
+     * bascule remet le backoff à zéro, et un NVR définitivement mort se fait
+     * réinterroger toutes les reconnect_delay secondes indéfiniment.
+     */
+    public function adoptBackoff($_previous) {
+        $this->failures = $_previous->failureCount();
+        $this->nextRetry = time();
     }
 
     /* Ajoute au buffer en le bornant : un flux corrompu ne doit pas remplir la RAM. */
@@ -911,12 +933,16 @@ class DahuaDaemon {
     }
 
     /* Choisit le transport : forcé par la configuration, sinon DHIP d'abord. */
-    private function makeTransport($_nvrConfig, $_forceCgi = false) {
+    private function makeTransport($_nvrConfig, $_prefer = null) {
         $mode = isset($_nvrConfig['transport']) ? $_nvrConfig['transport'] : 'auto';
-        if ($mode == 'cgi' || $_forceCgi) {
+        if ($mode == 'cgi') {
             return new DahuaCgiTransport($_nvrConfig);
         }
-        return new DahuaDhipTransport($_nvrConfig);
+        if ($mode == 'dhip') {
+            return new DahuaDhipTransport($_nvrConfig);
+        }
+        return ($_prefer == 'CGI') ? new DahuaCgiTransport($_nvrConfig)
+                                   : new DahuaDhipTransport($_nvrConfig);
     }
 
     /* --------------------------------------------------------------- démarrage */
@@ -1015,19 +1041,24 @@ class DahuaDaemon {
             }
 
             $first = ($client->failureCount() == 0);
+            $connectFailures = $client->noteConnectFailure();
             $delay = $client->scheduleRetry(max(5, (int) $this->config['reconnect_delay']));
             DahuaLog::error($client->name() . ' ' . $error . ' — nouvel essai dans ' . $delay . 's');
 
             /*
-             * Bascule automatique sur le CGI : certains firmwares récents refusent
+             * Bascule automatique de transport : certains firmwares récents refusent
              * l'authentification DHIP tout en acceptant parfaitement le long-polling.
+             * Elle joue dans les deux sens — un repli à sens unique condamnait le NVR
+             * au CGI jusqu'au prochain redémarrage du démon, même une fois son DHIP
+             * revenu.
              */
             $mode = isset($client->config['transport']) ? $client->config['transport'] : 'auto';
-            if ($mode == 'auto' && $client->label() == 'DHIP' && $client->failureCount() >= 2) {
-                DahuaLog::warning($client->name() . ' DHIP en échec, bascule sur le transport CGI');
-                $config = $client->config;
-                $this->clients[$id] = $this->makeTransport($config, true);
-                $this->clients[$id]->scheduleRetry(0, true);
+            if ($mode == 'auto' && $connectFailures >= 2) {
+                $other = ($client->label() == 'DHIP') ? 'CGI' : 'DHIP';
+                DahuaLog::warning($client->name() . ' ' . $client->label()
+                                . ' en échec, bascule sur le transport ' . $other);
+                $this->clients[$id] = $this->makeTransport($client->config, $other);
+                $this->clients[$id]->adoptBackoff($client);
             }
 
             // Un seul signalement de déconnexion, pas un à chaque retentative.
@@ -1387,6 +1418,10 @@ class DahuaDaemon {
                 if (isset($this->clients[$id])) {
                     DahuaLog::info($this->clients[$id]->name() . ' reconnexion demandée');
                     $this->clients[$id]->disconnect();
+                    /* Une reconnexion demandée à la main repart du transport préféré :
+                       c'est le levier qui sort d'un repli CGI une fois le DHIP du NVR
+                       revenu, sans attendre que le CGI échoue à son tour. */
+                    $this->clients[$id] = $this->makeTransport($this->clients[$id]->config);
                     $this->clients[$id]->scheduleRetry(0, true);
                 } else {
                     $result['state'] = 'error';
