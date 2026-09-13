@@ -82,7 +82,8 @@
         "condition(s)": "condition(s)",
         "Caméra supprimée dans une condition": "A condition refers to a deleted camera",
         "Rouvrez la règle et choisissez une caméra existante": "Reopen the rule and pick an existing camera",
-        "Type d'équipement inconnu, aucune commande supprimée :": "Unknown equipment type, no command removed:"
+        "Type d'équipement inconnu, aucune commande supprimée :": "Unknown equipment type, no command removed:",
+        "n'a aucune condition complète : elle ne se déclenchera jamais. Ouvrez-la et choisissez une caméra et une détection sur chaque ligne.": "has no complete condition: it will never trigger. Open it and pick a camera and a detection on every row."
     },
     "plugins/dahua/core/php/jeeDahua.php": {
         "Vous n'êtes pas autorisé à effectuer cette action": "You are not authorized to perform this action",

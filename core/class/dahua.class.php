@@ -530,6 +530,19 @@ class dahua extends eqLogic {
             dahuaRule::forget($this->getId());
         }
         if ($this->getConfiguration('type') == self::TYPE_RULE) {
+            /*
+             * Une règle sans condition exploitable ne produit aucune erreur : elle
+             * ne se déclenche simplement jamais. L'onglet Santé le signale, mais
+             * personne ne va le consulter spontanément — un message, lui, se voit.
+             */
+            $messageKey = 'ruleEmpty' . $this->getId();
+            if (count(dahuaRule::conditions($this)) == 0) {
+                message::add(__CLASS__, $this->getHumanName() . ' '
+                    . __('n\'a aucune condition complète : elle ne se déclenchera jamais. Ouvrez-la et choisissez une caméra et une détection sur chaque ligne.', __FILE__),
+                    '', $messageKey);
+            } else {
+                message::removeAll(__CLASS__, $messageKey);
+            }
             return;                                   // une règle n'intéresse pas le démon
         }
         self::reloadDaemonConfig();
