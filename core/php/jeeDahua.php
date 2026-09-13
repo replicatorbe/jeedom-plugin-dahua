@@ -30,6 +30,10 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 require_once __DIR__ . '/../class/dahua.class.php';
 
 if (!jeedom::apiAccess(init('apikey'), 'dahua')) {
+    /* 401 et non 200 : le démon ne dispose que du code HTTP pour savoir si son lot
+     * a été pris. Répondre 200 sur un refus lui fait jeter des événements que
+     * Jeedom n'a jamais enregistrés, sans la moindre trace d'un côté ni de l'autre. */
+    http_response_code(401);
     echo __('Vous n\'êtes pas autorisé à effectuer cette action', __FILE__);
     die();
 }

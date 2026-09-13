@@ -858,10 +858,23 @@ class DahuaDaemon {
             curl_close($ch);
 
             if ($code == 200) {
-                return $response;
+                /*
+                 * Un 200 ne suffit pas pour un lot d'événements : jeeDahua.php répond
+                 * aussi en 200 quand il le rejette (corps vide, ou message de refus).
+                 * Seul 'OK' atteste que Jeedom l'a réellement traité — sans ce test,
+                 * une clé API régénérée pendant que le démon tourne fait jeter tous
+                 * les événements en les lui faisant croire livrés.
+                 */
+                if ($_body === null || trim((string) $response) === 'OK') {
+                    return $response;
+                }
+                DahuaLog::error('lot refusé par Jeedom : '
+                              . substr(trim((string) $response), 0, 200)
+                              . ' — tentative ' . ($i + 1) . '/' . self::PUSH_ATTEMPTS);
+            } else {
+                DahuaLog::error('callback en échec (HTTP ' . $code . ($error != '' ? ' / ' . $error : '')
+                              . ') tentative ' . ($i + 1) . '/' . self::PUSH_ATTEMPTS);
             }
-            DahuaLog::error('callback en échec (HTTP ' . $code . ($error != '' ? ' / ' . $error : '')
-                          . ') tentative ' . ($i + 1) . '/' . self::PUSH_ATTEMPTS);
         }
         return false;
     }
