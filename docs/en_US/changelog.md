@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 — 2026-09-13
+
+**Fixes**
+
+- The fallback from DHIP to CGI fired on the very first failed connection
+  instead of after two as announced: a brief NVR outage was enough to lose the
+  events only DHIP reports, with no way back. The switch now works both ways,
+  and "Reconnect" starts again from the preferred transport.
+- Events could be dropped silently: the callback answered "not authorised" with
+  a success code, and the daemon counted them as delivered. An API key
+  regenerated while the daemon was running then froze every camera, without a
+  single message on either side.
+- A daemon that refuses to start now says so in the message centre, instead of
+  showing up only in the Health tab.
+- "Test the rule" asks for confirmation: the test really plays the actions,
+  lighting and siren included.
+
 ## 0.4 — 2026-09-13
 
 **Cross-detection rules**

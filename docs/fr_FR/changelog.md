@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1 — 13/09/2026
+
+**Correctifs**
+
+- Le repli de DHIP vers CGI se déclenchait dès la première connexion ratée, et
+  non après deux comme annoncé : une simple coupure du NVR suffisait à priver
+  l'installation des événements que seul DHIP remonte, et plus rien ne pouvait
+  y ramener. La bascule joue désormais dans les deux sens, et « Reconnecter »
+  repart du transport préféré.
+- Les événements pouvaient être jetés en silence : le callback répondait
+  « autorisation refusée » avec un code de succès, et le démon les comptait
+  livrés. Une clé API régénérée pendant que le démon tourne figeait alors toutes
+  les caméras, sans le moindre message d'un côté ni de l'autre.
+- Un démon qui refuse de démarrer le signale maintenant dans le centre de
+  messages, au lieu de n'apparaître que dans l'onglet Santé.
+- « Tester la règle » demande confirmation : le test joue réellement les
+  actions, éclairage et sirène compris.
+
 ## 0.4 — 13/09/2026
 
 **Règles de détection croisée**
