@@ -813,6 +813,8 @@ class DahuaDaemon {
     const PUSH_ATTEMPTS = 2;
     const PUSH_QUEUE_MAX = 500;
 
+    const SNAPSHOT_TIMEOUT = 15;
+
     private $opt;
     private $config = array();
     private $clients = array();          // eqLogic_id du NVR => DahuaTransport
@@ -1297,6 +1299,42 @@ class DahuaDaemon {
         exit(0);
     }
 
+    /*
+     * Cause lisible d'une capture ratée. L'ordre compte : l'erreur curl passe
+     * AVANT le code HTTP, parce qu'en authentification digest curl fait deux
+     * échanges — le challenge, puis la requête signée. Un délai dépassé pendant
+     * le second laisse CURLINFO_HTTP_CODE à 401, celui du challenge.
+     *
+     * Se fier au code seul faisait donc journaliser « identifiants refusés »
+     * sur une caméra dont la liaison venait de tomber, avec des identifiants
+     * parfaitement valides : le pire message possible, il envoie chercher là où
+     * il n'y a rien. Vérifié : curl_exec vaut false, errno 28, et le code 401.
+     */
+    private function snapshotFailure($_errno, $_error, $_code) {
+        // CURLE_OPERATION_TIMEOUTED plutôt que son alias CURLE_OPERATION_TIMEDOUT,
+        // défini seulement sur les PHP récents.
+        if ($_errno == CURLE_OPERATION_TIMEOUTED) {
+            return 'pas de réponse en ' . self::SNAPSHOT_TIMEOUT
+                 . ' s, liaison avec la caméra probablement coupée';
+        }
+        if ($_errno != CURLE_OK) {
+            return $_error . ' (curl ' . $_errno . ')';
+        }
+        /*
+         * HTTP 400 sur un canal précis : le NVR ne peut pas le servir, presque
+         * toujours parce que la caméra ne lui fournit plus de flux.
+         */
+        if ($_code == 400) {
+            return 'caméra probablement hors ligne';
+        }
+        if ($_code == 401) {
+            return 'identifiants refusés';
+        }
+        // Reste le cas d'une réponse complète mais qui n'est pas une image :
+        // le NVR répond parfois 200 avec un message d'erreur en texte.
+        return ($_code == 200) ? 'réponse du NVR sans image' : 'HTTP ' . $_code;
+    }
+
     private function fetchSnapshot($_nvrConfig, $_channel, $_cameraId) {
         $httpPort = isset($_nvrConfig['http_port']) && (int) $_nvrConfig['http_port'] > 0
                   ? (int) $_nvrConfig['http_port'] : 80;
@@ -1310,23 +1348,19 @@ class DahuaDaemon {
             CURLOPT_HTTPAUTH       => CURLAUTH_DIGEST,
             CURLOPT_USERPWD        => $_nvrConfig['username'] . ':' . $_nvrConfig['password'],
             CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_TIMEOUT        => self::SNAPSHOT_TIMEOUT,
         ));
         $image = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $code  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($ch);
+        $error = curl_error($ch);
         curl_close($ch);
 
         // Le NVR répond parfois 200 avec un message d'erreur en texte : on exige
         // la signature JPEG plutôt que de se fier au code HTTP.
         if ($image === false || $code != 200 || strlen($image) < 1024 || substr($image, 0, 2) !== "\xFF\xD8") {
-            /*
-             * HTTP 400 sur un canal précis : le NVR ne peut pas le servir, presque
-             * toujours parce que la caméra ne lui fournit plus de flux.
-             */
-            $cause = ($code == 400)
-                   ? 'caméra probablement hors ligne'
-                   : ($code == 401 ? 'identifiants refusés' : 'HTTP ' . $code);
-            DahuaLog::warning('capture impossible sur le canal ' . $_channel . ' : ' . $cause);
+            DahuaLog::warning('capture impossible sur le canal ' . $_channel . ' : '
+                            . $this->snapshotFailure($errno, $error, $code));
             return false;
         }
 
