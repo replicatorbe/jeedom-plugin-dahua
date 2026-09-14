@@ -815,6 +815,22 @@ class DahuaDaemon {
 
     const SNAPSHOT_TIMEOUT = 15;
 
+    /*
+     * Ces événements annoncent que le NVR n'a plus d'image du canal : la liaison
+     * avec la caméra vient de tomber, ou le flux vidéo est perdu. Lui demander
+     * une capture à cet instant, c'est demander ce qu'il n'a pas — snapshot.cgi
+     * accepte la requête et ne répond jamais, jusqu'au délai d'attente.
+     *
+     * Le coût n'est pas seulement une ligne d'avertissement : le fils reste
+     * bloqué SNAPSHOT_TIMEOUT secondes, et le créneau anti-rafale de la caméra
+     * est déjà consommé, donc une vraie détection juste après n'aurait pas
+     * d'image. Constaté 8 fois en une journée, une fois par perte de liaison.
+     *
+     * VideoBlind n'y figure pas : une caméra masquée fournit encore une image,
+     * et c'est précisément celle qu'on veut voir.
+     */
+    const NO_SNAPSHOT = array('NetMonitorAbort', 'VideoLoss');
+
     private $opt;
     private $config = array();
     private $clients = array();          // eqLogic_id du NVR => DahuaTransport
@@ -1261,6 +1277,9 @@ class DahuaDaemon {
 
     private function maybeSnapshot($_client, $_event) {
         if (empty($this->config['snapshot_on_event']) || $_event['channel'] < 1) {
+            return;
+        }
+        if (in_array($_event['code'], self::NO_SNAPSHOT, true)) {
             return;
         }
         if (!isset($_client->config['channels'][$_event['channel']])) {
