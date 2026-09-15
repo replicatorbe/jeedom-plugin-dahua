@@ -188,6 +188,8 @@ class dahua extends eqLogic {
             'reconnect_delay'   => (int) config::byKey('reconnect_delay', __CLASS__, 15),
             'snapshot_on_event' => (int) config::byKey('snapshot_on_event', __CLASS__, 1),
             'snapshot_keep'     => (int) config::byKey('snapshot_keep', __CLASS__, 50),
+            // Sonde de joignabilité des caméras. 0 désactive.
+            'camera_check_interval' => (int) config::byKey('camera_check_interval', __CLASS__, 60),
             'nvrs'              => array(),
         );
 
@@ -549,7 +551,34 @@ class dahua extends eqLogic {
             }
             return;                                   // une règle n'intéresse pas le démon
         }
+        $this->spreadObject();
+        if ($this->getConfiguration('type') == self::TYPE_NVR) {
+            $this->publishCamStatus();                // la tuile doit exister dès la création
+        }
         self::reloadDaemonConfig();
+    }
+
+    /*
+     * Un équipement sans objet parent n'apparaît sur AUCUN dashboard : le coeur
+     * ne construit ses conteneurs qu'à partir des objets, et n'interroge jamais
+     * le seau des équipements orphelins (eqLogic::byObjectId(null) n'est appelé
+     * que par la page d'ordonnancement des widgets).
+     *
+     * discoverCameras() fait déjà hériter les caméras de l'objet du NVR, mais
+     * seulement à leur création : renseigner l'objet du NVR après coup ne
+     * remontait donc rien. On rejoue l'héritage à chaque enregistrement, sans
+     * jamais écraser un choix explicite de l'utilisateur.
+     */
+    private function spreadObject() {
+        if ($this->getConfiguration('type') != self::TYPE_NVR || $this->getObject_id() == '') {
+            return;
+        }
+        foreach (self::camerasOf($this->getId()) as $cam) {
+            if ($cam->getObject_id() == '') {
+                $cam->setObject_id($this->getObject_id());
+                $cam->save(true);                     // direct : pas de postSave en cascade
+            }
+        }
     }
 
     /*
@@ -561,12 +590,18 @@ class dahua extends eqLogic {
         // 'lastevent' et 'lastevent_date' figurent dans les deux premières
         // listes : elles survivent donc à une bascule NVR <-> caméra, et ne
         // disparaissent que si l'équipement devient une règle.
-        $nvrIds = array('online', 'reconnect', 'alarmout_on', 'alarmout_off',
+        $nvrIds = array('online', 'camstatus', 'reconnect', 'alarmout_on', 'alarmout_off',
                         'lastevent', 'lastevent_date');
         foreach (self::$_nvrEvents as $def) {
             $nvrIds[] = $def['logicalId'];
         }
-        $camIds = array('snapshot', 'take_snapshot', 'ptz_preset',
+        // 'online' figure dans les deux premières listes pour la même raison que
+        // 'lastevent' : sans lui ici, il serait vu comme une commande de NVR sur
+        // une caméra, donc créé par createCameraCommands() puis détruit par cette
+        // méthode DANS LE MÊME ENREGISTREMENT — avec son historique, remove()
+        // appelant emptyHistory(). Et la panne serait muette : checkAndUpdateCmd()
+        // sur une commande absente retourne false sans rien journaliser.
+        $camIds = array('online', 'snapshot', 'take_snapshot', 'ptz_preset',
                         'light_on', 'light_off', 'siren_on', 'siren_off',
                         'lastevent', 'lastevent_date');
         foreach (self::$_channelEvents as $def) {
@@ -631,6 +666,16 @@ class dahua extends eqLogic {
             dahuaRule::forget($this->_removedId);
             return;                                   // aucune incidence sur le démon
         }
+        if ($this->getConfiguration('type') == self::TYPE_CAMERA) {
+            /* Sans cet oubli, une caméra recréée plus tard sur le même canal
+             * hériterait d'un « déjà signalée » fantôme, et sa prochaine perte
+             * resterait muette. */
+            self::forgetCamState($this->_removedId);
+            $nvr = self::byId((int) $this->getConfiguration('nvr_id'));
+            if (is_object($nvr)) {
+                $nvr->publishCamStatus();             // la tuile ne doit plus la montrer
+            }
+        }
         self::reloadDaemonConfig();
     }
 
@@ -689,12 +734,43 @@ class dahua extends eqLogic {
                 $cmd->setConfiguration($key, $value);
             }
         }
+        /*
+         * Widget personnalisé, posé sur les deux rendus. Le nom doit être qualifié
+         * (« dahua::… ») : setTemplate() préfixe « core:: » à tout nom qui ne l'est
+         * pas, et le gabarit resterait introuvable.
+         */
+        if (isset($_options['template'])) {
+            $cmd->setTemplate('dashboard', $_options['template']);
+            $cmd->setTemplate('mobile', $_options['template']);
+        }
         $cmd->save();
         return $cmd;
     }
 
     private function createCameraCommands() {
         $order = 0;
+        /*
+         * Joignabilité de la caméra, alimentée par la sonde du démon et non par un
+         * événement : une caméra PoE qui décroche ne produit ni VideoLoss ni
+         * NetMonitorAbort, elle se tait, simplement.
+         *
+         * Volontairement hors de $_channelEvents, dont la clé est un code Dahua.
+         * Une entrée factice dans cette table la ferait apparaître dans le
+         * sélecteur de détection des règles, la soumettrait au moteur de
+         * corrélation qui ne sait traiter que des impulsions, et surtout lui
+         * appliquerait l'option 'invert' : une caméra en ligne s'afficherait
+         * alors avec une croix rouge.
+         *
+         * Invisible : les huit états sont montrés ensemble par l'équipement de
+         * supervision. Elle reste la source de vérité, utilisable dans un
+         * scénario et historisée pour répondre à « depuis quand ? ».
+         */
+        $this->addCmdIfMissing('online', 'Connectée', 'info', 'binary', array(
+            'isVisible'    => 0,
+            'isHistorized' => 1,
+            'generic_type' => 'ONLINE',
+            'order'        => $order++,
+        ));
         foreach (self::$_channelEvents as $def) {
             $options = array(
                 'isVisible'    => $def['visible'],
@@ -771,8 +847,33 @@ class dahua extends eqLogic {
 
     private function createNvrCommands() {
         $order = 0;
+        /*
+         * Tuile de synthèse. Une seule commande porte, en JSON, la santé du NVR et
+         * l'état de chacune de ses caméras ; le widget en fait une grille.
+         *
+         * Pourquoi une commande unique plutôt qu'une commande par caméra :
+         *  - Jeedom ne permet pas à un plugin de fournir un widget d'ÉQUIPEMENT
+         *    (eqLogic::toHtml() charge toujours le gabarit du coeur), seul un
+         *    widget de commande donne la main sur le rendu ;
+         *  - son logicalId est fixe, donc removeForeignCommands() reste trivial et
+         *    aucune commande n'est laissée orpheline quand une caméra disparaît ;
+         *  - les noms de caméra deviennent des données rafraîchies à chaque sonde,
+         *    et non des libellés soumis à l'unicité (eqLogic_id, name) : renommer
+         *    une caméra se répercute tout seul.
+         */
+        $this->addCmdIfMissing('camstatus', 'Caméras', 'info', 'string', array(
+            'order'    => $order++,
+            'template' => 'dahua::dahua',
+        ));
+        /*
+         * Connexion et stockage sont désormais rendus par le bandeau du widget.
+         * Masquées pour ne pas afficher deux fois la même information, elles
+         * restent disponibles aux scénarios et à l'historique.
+         */
         $this->addCmdIfMissing('online', 'Connecté', 'info', 'binary', array(
+            'isVisible'    => 0,
             'isHistorized' => 1,
+            'generic_type' => 'ONLINE',
             'order'        => $order++,
         ));
         foreach (self::$_nvrEvents as $def) {
@@ -787,6 +888,196 @@ class dahua extends eqLogic {
         // Sorties d'alarme : absentes de nombreux NVR, masquées par défaut.
         $this->addCmdIfMissing('alarmout_on',  'Sortie alarme ON',   'action', 'other', array('isVisible' => 0, 'order' => $order++));
         $this->addCmdIfMissing('alarmout_off', 'Sortie alarme OFF',  'action', 'other', array('isVisible' => 0, 'order' => $order++));
+    }
+
+    /*
+     * Recompose la tuile de synthèse de ce NVR et la publie.
+     *
+     * Appelée après toute mise à jour susceptible de la changer : sonde de
+     * joignabilité, connexion ou perte du NVR, événement de stockage. Elle relit
+     * l'état réel des commandes plutôt que de tenir un état parallèle : il n'y a
+     * ainsi qu'une seule vérité, et une tuile ne peut pas diverger de ce que les
+     * scénarios voient.
+     */
+    public function publishCamStatus() {
+        if ($this->getConfiguration('type') != self::TYPE_NVR) {
+            return;
+        }
+        $online = $this->getCmd('info', 'online');
+        $nvrUp  = is_object($online) ? ((int) $online->execCmd() == 1) : false;
+
+        /* Un seul défaut suffit à signaler le stockage : les trois codes décrivent
+         * la même chose du point de vue de l'utilisateur — il faut aller voir. */
+        $storageOk = true;
+        foreach (array('storage_missing', 'storage_failure', 'storage_low') as $logicalId) {
+            $cmd = $this->getCmd('info', $logicalId);
+            if (is_object($cmd) && (int) $cmd->execCmd() == 1) {
+                $storageOk = false;
+            }
+        }
+
+        $cams = array();
+        $up   = 0;
+        foreach (self::camerasOf($this->getId()) as $cam) {
+            $state = $cam->getCmd('info', 'online');
+            $entry = array('n' => $cam->getName());
+            if ($cam->getIsEnable() == 0) {
+                /* Une caméra que l'utilisateur a lui-même désactivée n'est pas une
+                 * panne : la compter comme perdue ferait crier la tuile à tort. */
+                $entry['s'] = 'off';
+            } elseif (!is_object($state) || $state->execCmd() === '') {
+                $entry['s'] = 'off';                      // jamais sondée : inconnu, pas perdu
+            } elseif ((int) $state->execCmd() == 1) {
+                $entry['s'] = 1;
+                $up++;
+            } else {
+                $entry['s'] = 0;
+                $since = strtotime((string) $state->getValueDate());
+                if ($since !== false && $since > 0) {
+                    $entry['since'] = $since;
+                }
+            }
+            $cams[] = $entry;
+        }
+
+        $payload = array(
+            't'     => time(),
+            'nvr'   => array(
+                'on' => $nvrUp ? 1 : 0,
+                'tr' => self::transport($this->getId()),
+                'st' => $storageOk ? 1 : 0,
+            ),
+            'on'    => $up,
+            'total' => count($cams),
+            'c'     => $cams,
+        );
+
+        /* Les noms de caméra viennent du NVR, donc d'une source externe : ces
+         * drapeaux empêchent qu'un nom porteur de balises casse le widget. */
+        $this->checkAndUpdateCmd('camstatus', json_encode($payload,
+            JSON_UNESCAPED_UNICODE | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP));
+    }
+
+    /* ============================================ ÉTAT TRANSITOIRE (CACHE)
+     *
+     * Le callback est un processus PHP neuf à chaque requête : il n'a aucune
+     * mémoire d'un événement au suivant. Tout ce qui doit survivre entre deux
+     * appels — et à un redémarrage du démon — vit donc dans le cache, comme le
+     * fait déjà le moteur de corrélation pour son état.
+     */
+
+    const TRANSPORT_CACHE = 'dahua::transport::';
+    const CAMSTATE_CACHE  = 'dahua::camstate::';
+
+    public static function transport($_nvrId) {
+        return (string) cache::byKey(self::TRANSPORT_CACHE . (int) $_nvrId)->getValue('');
+    }
+
+    public static function rememberTransport($_nvrId, $_transport) {
+        cache::set(self::TRANSPORT_CACHE . (int) $_nvrId, (string) $_transport, 0);
+    }
+
+    /*
+     * Mémoire d'alerte d'une caméra.
+     *   'fired' : date du dernier jeu d'actions « perdue », 0 si aucune en cours.
+     * Elle est ce qui garantit qu'une perte ne notifie qu'UNE fois : sans elle,
+     * un redémarrage du démon — qui resonde et republie tout — renotifierait
+     * chaque caméra déjà connue comme perdue.
+     */
+    public static function camState($_camId) {
+        $raw   = cache::byKey(self::CAMSTATE_CACHE . (int) $_camId)->getValue('');
+        $state = ($raw != '') ? json_decode($raw, true) : null;
+        if (!is_array($state)) {
+            $state = array();
+        }
+        return array('fired' => isset($state['fired']) ? (int) $state['fired'] : 0);
+    }
+
+    public static function saveCamState($_camId, $_state) {
+        cache::set(self::CAMSTATE_CACHE . (int) $_camId, json_encode($_state), 0);
+    }
+
+    public static function forgetCamState($_camId) {
+        cache::byKey(self::CAMSTATE_CACHE . (int) $_camId)->remove();
+    }
+
+    /* =================================================== ACTIONS CONFIGURABLES
+     *
+     * scenarioExpression::createAndExec est le primitif du coeur pour les actions
+     * configurables : il accepte une commande, un scénario ou une variable, et
+     * honore les options « désactivée » et « en tâche de fond » du sélecteur.
+     *
+     * $_tags       : substitutions (#camera#, #nvr#…) appliquées aux options, et
+     *                transmises telles quelles à un scénario appelé.
+     * $_guardSelf  : refuse une action visant une commande de l'équipement lui-même.
+     *                Indispensable pour une règle, dont la commande « Tester »
+     *                posée comme sa propre action boucherait indéfiniment. Nuisible
+     *                sur un NVR, où l'action la plus naturelle après une caméra
+     *                perdue est justement « Reconnecter » ce même NVR.
+     */
+    public static function runActions($_eqLogic, $_key, $_tags = array(), $_guardSelf = true) {
+        $actions = $_eqLogic->getConfiguration($_key);
+        if (!is_array($actions)) {
+            return;
+        }
+        foreach ($actions as $action) {
+            $expression = isset($action['cmd']) ? trim((string) $action['cmd']) : '';
+            if ($expression == '') {
+                continue;
+            }
+            if ($_guardSelf && self::targetsSelf($_eqLogic, $expression)) {
+                log::add(__CLASS__, 'warning', $_eqLogic->getHumanName() . ' '
+                       . __('action ignorée, elle vise l\'équipement lui-même :', __FILE__) . ' ' . $expression);
+                continue;
+            }
+            $options = (isset($action['options']) && is_array($action['options']))
+                     ? $action['options'] : array();
+            if (!empty($_tags)) {
+                foreach ($options as $key => $value) {
+                    if (is_string($value)) {
+                        $options[$key] = str_replace(array_keys($_tags), array_values($_tags), $value);
+                    }
+                }
+                /* Transmis au scénario appelé. On ne remplace jamais une valeur que
+                 * le sélecteur du coeur aurait déjà posée : elle vient de l'utilisateur. */
+                if (!isset($options['tags']) || $options['tags'] === '') {
+                    $options['tags'] = $_tags;
+                }
+            }
+            // 'source' sert de libellé d'origine, notamment au bloc « message » du
+            // coeur, qui en fait le nom de plugin affiché.
+            $options['source'] = $_eqLogic->getHumanName();
+            try {
+                scenarioExpression::createAndExec('action', $expression, $options);
+            } catch (Throwable $e) {
+                // Une action en échec ne doit pas empêcher les suivantes : une
+                // notification cassée ne doit pas retenir la sirène.
+                log::add(__CLASS__, 'error', $_eqLogic->getHumanName() . ' '
+                       . __('action en échec :', __FILE__) . ' ' . $expression
+                       . ' — ' . $e->getMessage());
+            }
+        }
+    }
+
+    private static function targetsSelf($_eqLogic, $_expression) {
+        $id = str_replace('#', '', cmd::humanReadableToCmd($_expression));
+        if (!is_numeric($id)) {
+            return false;
+        }
+        $cmd = cmd::byId($id);
+        return is_object($cmd) && $cmd->getEqLogic_id() == $_eqLogic->getId();
+    }
+
+    /* Les caméras rattachées à un NVR, dans l'ordre des canaux. */
+    public static function camerasOf($_nvrId) {
+        $cams = array();
+        foreach (self::byTypeAndSearchConfiguration('dahua', array('type' => self::TYPE_CAMERA), true) as $cam) {
+            if ($cam->getConfiguration('nvr_id') == $_nvrId) {
+                $cams[(int) $cam->getConfiguration('channel')] = $cam;
+            }
+        }
+        ksort($cams);
+        return $cams;
     }
 
     /*

@@ -1,0 +1,250 @@
+<div class="cmd cmd-widget #history#" data-type="info" data-subtype="string" data-template="dahua" data-state="wait" data-nvr="" data-cmd_id="#id#" data-cmd_uid="#uid#" data-version="#version#" data-eqLogic_id="#eqLogic_id#">
+  <div class="title #hide_name#">
+    <div class="cmdName">#name_display#</div>
+  </div>
+  <div class="content">
+    <div class="dahuaWait"></div>
+    <div class="dahuaHealth">
+      <span class="dahuaLink">
+        <span class="dahuaDot dahuaNvrDot"></span>
+        <span class="dahuaLinkText"></span>
+      </span>
+      <span class="dahuaStorage"></span>
+    </div>
+    <div class="dahuaGrid"></div>
+    <div class="dahuaFoot"></div>
+  </div>
+  <div class="timeCmd label label-default #history#" data-type="info"></div>
+  <template>
+    <div>time : duration|date ({{Affiche durée ou date de la valeur}})</div>
+  </template>
+  <script>
+    (function () {
+      /* Une seule feuille de style pour toutes les tuiles du plugin, posée au
+         premier rendu. Le CSS d'un plugin n'est pas chargé sur le dashboard, et
+         les règles .content du coeur n'existent pas côté mobile : le gabarit doit
+         se suffire à lui-même. Aucune couleur en dur, tout vient du thème. */
+      if (!document.getElementById('dahuaWidgetCss')) {
+        var css = document.createElement('style')
+        css.id = 'dahuaWidgetCss'
+        css.textContent = [
+          '.cmd-widget[data-template="dahua"]{display:flex;flex-direction:column;align-items:center;width:100%}',
+          '.cmd-widget[data-template="dahua"] .cmdName{font-size:12px;line-height:16px;font-weight:400;color:var(--txt-color)}',
+          '.cmd-widget[data-template="dahua"] .content{display:flex;flex-direction:column;align-items:stretch;justify-content:center;width:100%;padding:0 6px 3px;gap:4px}',
+
+          /* Rien reçu : la tuile le dit, et cache tout le reste. Une grille vide
+             ou un compteur à zéro feraient passer une commande jamais
+             rafraîchie pour une panne générale du NVR. */
+          '.cmd-widget[data-template="dahua"] .dahuaWait{display:none;padding:4px 0;font-size:.82em;line-height:1.3;text-align:center;color:var(--txt-color);opacity:.6}',
+          '.cmd-widget[data-template="dahua"][data-state="wait"] .dahuaWait{display:block}',
+          '.cmd-widget[data-template="dahua"][data-state="wait"] .dahuaHealth,',
+          '.cmd-widget[data-template="dahua"][data-state="wait"] .dahuaGrid,',
+          '.cmd-widget[data-template="dahua"][data-state="wait"] .dahuaFoot{display:none}',
+
+          /* Le bandeau de santé. Un fond à peine contrasté suffit à le détacher
+             de la grille sans en faire le sujet de la tuile. */
+          '.cmd-widget[data-template="dahua"] .dahuaHealth{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:2px 10px;width:100%;padding:3px 6px;font-size:.78em;line-height:1.5;color:var(--txt-color);background:var(--btnEq-default-color);border:1px solid transparent;border-radius:var(--border-radius)}',
+          '.cmd-widget[data-template="dahua"] .dahuaHealth.dahuaHidden{display:none}',
+          '.cmd-widget[data-template="dahua"] .dahuaLink{display:flex;align-items:center;gap:6px;min-width:0}',
+          '.cmd-widget[data-template="dahua"] .dahuaLinkText{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:600}',
+          '.cmd-widget[data-template="dahua"] .dahuaStorage{flex:0 0 auto;opacity:.7}',
+          '.cmd-widget[data-template="dahua"] .dahuaStorage.dahuaBad{opacity:1;font-weight:700;color:var(--al-danger-color)}',
+          /* NVR injoignable : le bandeau cesse d\'être discret. */
+          '.cmd-widget[data-template="dahua"][data-nvr="down"] .dahuaHealth{color:var(--al-danger-color);border-color:var(--al-danger-color);font-weight:700}',
+          /* Et la grille s\'estompe : sans le NVR, l\'état des caméras est le
+             dernier connu, pas une vérification. Il ne doit pas se lire comme
+             une certitude. */
+          '.cmd-widget[data-template="dahua"][data-nvr="down"] .dahuaGrid{opacity:.45}',
+
+          /* Grille sans requête de média : auto-fill retombe tout seul sur une
+             colonne dans une tuile étroite, ce qu\'une largeur en pourcentage ne
+             sait pas faire. */
+          '.cmd-widget[data-template="dahua"] .dahuaGrid{display:grid;grid-template-columns:repeat(auto-fill, minmax(118px, 1fr));gap:2px 10px;width:100%}',
+          '.cmd-widget[data-template="dahua"] .dahuaCam{display:flex;align-items:center;gap:6px;min-width:0;font-size:.78em;line-height:1.5;color:var(--txt-color)}',
+          '.cmd-widget[data-template="dahua"] .dahuaName{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
+          '.cmd-widget[data-template="dahua"] .dahuaCam[data-state="down"] .dahuaName{font-weight:600}',
+          '.cmd-widget[data-template="dahua"] .dahuaCam[data-state="off"] .dahuaName{opacity:.5}',
+
+          /* Pastille pleine en ligne, creuse hors ligne : la forme change, pas
+             seulement la couleur. Une tuile lue en noir et blanc, ou par un oeil
+             qui ne distingue pas le rouge du vert, reste exacte. */
+          '.cmd-widget[data-template="dahua"] .dahuaDot{flex:0 0 auto;box-sizing:border-box;width:8px;height:8px;border-radius:50%;background:var(--al-success-color)}',
+          '.cmd-widget[data-template="dahua"] .dahuaDot.dahuaDown{background:transparent;border:2px solid var(--al-danger-color)}',
+          '.cmd-widget[data-template="dahua"] .dahuaDot.dahuaGrey{background:var(--txt-color);opacity:.35}',
+
+          /* Le pied ne paraît que s\'il y a quelque chose à dire : une ligne
+             « 0 caméra perdue » serait du bruit permanent. */
+          '.cmd-widget[data-template="dahua"] .dahuaFoot{display:none;width:100%;padding-top:3px;border-top:1px solid var(--btnEq-default-color);font-size:.78em;font-weight:600;line-height:1.4;text-align:center;color:var(--al-danger-color);overflow-wrap:anywhere}',
+          '.cmd-widget[data-template="dahua"] .dahuaFoot.dahuaShown{display:block}'
+        ].join('')
+        document.head.appendChild(css)
+      }
+
+      /* JSON.parse lève sur une valeur vide, tronquée ou pas encore écrite : le
+         gabarit ne doit pas interrompre le dashboard pour autant. La variable
+         rattrapée reprend le nom du paramètre, que tools/check-js.py connaît :
+         cet outil ignore les liaisons de catch, et le corps ne s\'en sert pas. */
+      function dahuaParse(_raw) {
+        try { return JSON.parse(_raw) } catch (_raw) { return null }
+      }
+
+      /* Une durée courte et lisible, pas un compteur exact : ce qu\'on veut
+         savoir, c\'est si la caméra vient de tomber ou si elle manque depuis
+         des jours. En dessous d\'une heure, rien ne s\'affiche : une coupure de
+         quelques minutes est le plus souvent une reconnexion en cours. */
+      function dahuaAge(_seconds) {
+        if (_seconds === null || isNaN(_seconds) || _seconds < 3600) { return '' }
+        if (_seconds < 86400) { return Math.floor(_seconds / 3600) + ' h' }
+        return Math.floor(_seconds / 86400) + ' j'
+      }
+
+      /* Trois états, et un seul test pour les distinguer : une caméra
+         volontairement désactivée ne doit jamais compter comme une panne. */
+      function dahuaState(_value) {
+        if (_value === 'off' || _value === 'OFF' || _value === false) { return 'off' }
+        return (Number(_value) === 1) ? 'on' : 'down'
+      }
+
+      function dahuaCell(_camera, _rank, _now) {
+        var cell = document.createElement('span')
+        var dot = document.createElement('span')
+        var name = document.createElement('span')
+        var state = dahuaState(_camera.s)
+        var label = (typeof _camera.n === 'string' && _camera.n !== '') ? _camera.n : ('{{Canal}} ' + _rank)
+        var age = (state === 'down') ? dahuaAge(_now - Number(_camera.since)) : ''
+
+        cell.className = 'dahuaCam'
+        cell.setAttribute('data-state', state)
+
+        dot.className = 'dahuaDot' + ((state === 'down') ? ' dahuaDown' : ((state === 'off') ? ' dahuaGrey' : ''))
+        cell.appendChild(dot)
+
+        /* textContent et jamais innerHTML : les noms de canaux viennent du NVR,
+           donc d\'une source extérieure, et ne doivent pas être interprétés
+           comme du HTML. setAttribute fait la même promesse pour l\'infobulle,
+           qui porte le nom entier quand la colonne le tronque. */
+        name.className = 'dahuaName'
+        name.textContent = label
+        cell.appendChild(name)
+
+        /* La durée par caméra tient dans l\'infobulle : la grille reste sobre,
+           et le pied dit déjà l\'essentiel. */
+        if (state === 'down') {
+          cell.setAttribute('title', label + ' — ' + ((age !== '') ? ('{{hors ligne depuis}} ' + age) : '{{hors ligne}}'))
+        } else if (state === 'off') {
+          cell.setAttribute('title', label + ' — {{désactivée}}')
+        } else {
+          cell.setAttribute('title', label)
+        }
+
+        return cell
+      }
+
+      jeedom.cmd.addUpdateFunction('#id#', function (_options) {
+        var cmd = document.querySelector('.cmd[data-cmd_uid="#uid#"]')
+        if (!is_object(cmd)) { return }
+
+        /* Un seul objet transporte tout le relevé : une commande par caméra
+           demanderait autant de rafraîchissements, qui pourraient se croiser et
+           afficher un bandeau qui ne correspond plus à la liste. */
+        var data = dahuaParse(_options.value)
+        var health = cmd.querySelector('.dahuaHealth')
+        var linkDot = cmd.querySelector('.dahuaNvrDot')
+        var linkText = cmd.querySelector('.dahuaLinkText')
+        var storage = cmd.querySelector('.dahuaStorage')
+        var grid = cmd.querySelector('.dahuaGrid')
+        var foot = cmd.querySelector('.dahuaFoot')
+        var wait = cmd.querySelector('.dahuaWait')
+        var cameras = null
+        var nvr = null
+        var lost = 0
+        var lostAge = ''
+        var now = 0
+        var transport = ''
+        var i = 0
+
+        grid.textContent = ''
+        foot.textContent = ''
+        foot.className = 'dahuaFoot'
+
+        /* Valeur vide, illisible, ou relevé sans aucune caméra : surtout pas de
+           grille vide ni de compteur à zéro. Une commande qui vient d\'être
+           créée annoncerait une panne générale alors qu\'elle ne sait rien. */
+        cameras = (data !== null && typeof data === 'object' && Array.isArray(data.c)) ? data.c : null
+        if (cameras === null || cameras.length === 0) {
+          cmd.setAttribute('data-state', 'wait')
+          cmd.setAttribute('data-nvr', '')
+          wait.textContent = '{{En attente de relevé}}'
+          jeedom.cmd.displayDuration(_options.valueDate, cmd.querySelector('.timeCmd'), '#time#')
+          return
+        }
+
+        cmd.setAttribute('data-state', 'ready')
+        wait.textContent = ''
+
+        /* L\'heure du relevé sert de repère quand elle est postérieure à
+           l\'horloge du navigateur : sur un poste mal réglé, la différence
+           donnerait une durée négative, donc aucune durée du tout. */
+        now = Math.floor(Date.now() / 1000)
+        if (typeof data.t === 'number' && data.t > now) { now = data.t }
+
+        /* ------------------------------------------------- bandeau de santé */
+        nvr = (data.nvr !== null && typeof data.nvr === 'object') ? data.nvr : null
+        if (nvr === null) {
+          /* Relevé sans bloc santé : pas de bandeau plutôt qu\'un bandeau qui
+             affirmerait une connexion dont rien ne dit qu\'elle tient. */
+          cmd.setAttribute('data-nvr', '')
+          health.className = 'dahuaHealth dahuaHidden'
+        } else {
+          health.className = 'dahuaHealth'
+          transport = (typeof nvr.tr === 'string') ? nvr.tr : ''
+          if (Number(nvr.on) === 1) {
+            cmd.setAttribute('data-nvr', 'up')
+            linkDot.className = 'dahuaDot dahuaNvrDot'
+            linkText.textContent = '{{Connecté}}' + ((transport !== '') ? (' · ' + transport) : '')
+            /* Le stockage n\'est affiché que si le NVR répond : lui seul le
+               connaît, et « Stockage OK » sur un NVR muet serait une réponse
+               périmée présentée comme un fait. */
+            storage.textContent = (Number(nvr.st) === 1) ? '{{Stockage OK}}' : '{{Stockage en défaut}}'
+            storage.className = (Number(nvr.st) === 1) ? 'dahuaStorage' : 'dahuaStorage dahuaBad'
+          } else {
+            cmd.setAttribute('data-nvr', 'down')
+            linkDot.className = 'dahuaDot dahuaNvrDot dahuaDown'
+            linkText.textContent = '{{NVR injoignable}}'
+            storage.textContent = ''
+            storage.className = 'dahuaStorage'
+          }
+        }
+
+        /* ------------------------------------------------ grille et compte */
+        for (i = 0; i < cameras.length; i++) {
+          if (cameras[i] === null || typeof cameras[i] !== 'object') { continue }
+          if (dahuaState(cameras[i].s) === 'down') {
+            lost++
+            if (lost === 1) { lostAge = dahuaAge(now - Number(cameras[i].since)) }
+          }
+          grid.appendChild(dahuaCell(cameras[i], i + 1, now))
+        }
+
+        /* ------------------------------------------------------------ pied */
+        if (lost === 1) {
+          foot.textContent = '1 {{caméra perdue}}' + ((lostAge !== '') ? (' {{depuis}} ' + lostAge) : '')
+          foot.className = 'dahuaFoot dahuaShown'
+        } else if (lost > 1) {
+          /* Plusieurs caméras perdues : pas de durée, elles ne sont pas tombées
+             ensemble. Chaque ligne porte la sienne dans son infobulle. */
+          foot.textContent = lost + ' {{caméras perdues}}'
+          foot.className = 'dahuaFoot dahuaShown'
+        }
+
+        jeedom.cmd.displayDuration(_options.valueDate, cmd.querySelector('.timeCmd'), '#time#')
+      })
+
+      /* display_value reste vide : le coeur n\'échappe que les apostrophes dans
+         cette valeur, ce qui ne protège pas d\'une balise de fermeture de bloc.
+         La tuile lit #value#, déjà assaini côté PHP par json_encode et ses
+         drapeaux hexadécimaux. */
+      jeedom.cmd.refreshValue([{ cmd_id: '#id#', value: '#value#', display_value: '', valueDate: '#valueDate#', collectDate: '#collectDate#', alertLevel: '#alertLevel#', unit: '#unite#' }])
+    })()
+  </script>
+</div>

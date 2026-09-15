@@ -815,6 +815,10 @@ class DahuaDaemon {
 
     const SNAPSHOT_TIMEOUT = 15;
 
+    /* Plus court que la capture : RemoteDevice est une lecture de configuration,
+     * un NVR sain répond en moins d'une seconde. */
+    const PROBE_TIMEOUT = 8;
+
     /*
      * Ces événements annoncent que le NVR n'a plus d'image du canal : la liaison
      * avec la caméra vient de tomber, ou le flux vidéo est perdu. Lui demander
@@ -837,6 +841,7 @@ class DahuaDaemon {
     private $listener = null;
     private $pulseResets = array();
     private $lastSnapshot = array();
+    private $lastCameraProbe = array();       // eqLogic_id du NVR => dernière sonde
     private $pushQueue = array();
     private $pushPid = 0;
     private $reloadPending = false;
@@ -912,6 +917,12 @@ class DahuaDaemon {
         $config['reconnect_delay']   = isset($config['reconnect_delay']) ? (int) $config['reconnect_delay'] : 15;
         $config['snapshot_on_event'] = isset($config['snapshot_on_event']) ? (int) $config['snapshot_on_event'] : 1;
         $config['snapshot_keep']     = isset($config['snapshot_keep']) ? (int) $config['snapshot_keep'] : 50;
+        // Plancher à 15 s : le serveur HTTP embarqué des NVR est fragile.
+        $config['camera_check_interval'] = isset($config['camera_check_interval'])
+                                         ? (int) $config['camera_check_interval'] : 60;
+        if ($config['camera_check_interval'] > 0) {
+            $config['camera_check_interval'] = max(15, $config['camera_check_interval']);
+        }
         $this->config = $config;
 
         /*
@@ -958,6 +969,7 @@ class DahuaDaemon {
             }
         }
         $this->lastSnapshot = array_intersect_key($this->lastSnapshot, $known);
+        $this->lastCameraProbe = array_intersect_key($this->lastCameraProbe, $known);
 
         DahuaLog::info(count($this->clients) . ' NVR configuré(s)');
         return true;
@@ -1044,7 +1056,145 @@ class DahuaDaemon {
 
             $this->flushPulseResets();
             $this->ticks();
+            $this->probeCameras();
         }
+    }
+
+    /* ------------------------------------------- joignabilité des caméras */
+
+    /*
+     * Une caméra PoE qui décroche ne produit AUCUN événement : ni VideoLoss, ni
+     * NetMonitorAbort. Elle se tait, et rien dans Jeedom ne le signale. Seule une
+     * interrogation périodique permet de le voir.
+     *
+     * La source est configManager.cgi?action=getConfig&name=RemoteDevice : une
+     * requête couvre tous les canaux (quelques Ko), là où une capture par canal
+     * coûterait plusieurs Mo — et surtout bloquerait SNAPSHOT_TIMEOUT secondes
+     * précisément sur les canaux morts, ceux qu'on cherche à détecter.
+     *
+     * Placée après ticks(), donc jamais sur un NVR qu'on vient de déclarer perdu,
+     * et hors du bloc stream_select : elle doit tourner même quand aucun
+     * événement n'arrive — c'est exactement le cas qui nous occupe.
+     */
+    private function probeCameras() {
+        $period = (int) $this->config['camera_check_interval'];
+        if ($period <= 0) {
+            return;                                   // sonde désactivée
+        }
+        foreach ($this->clients as $id => $client) {
+            if ($client->state != 'connected' || empty($client->config['channels'])) {
+                continue;
+            }
+            if (isset($this->lastCameraProbe[$id]) && time() - $this->lastCameraProbe[$id] < $period) {
+                continue;
+            }
+            /*
+             * Horodaté AVANT le fork, comme lastSnapshot. C'est la seule
+             * protection contre l'empilement : on ne suit pas le PID du fils
+             * (voir plus bas), donc rien d'autre n'empêcherait un NVR lent de
+             * faire naître un fils à chaque tour de boucle.
+             */
+            $this->lastCameraProbe[$id] = time();
+
+            $pid = pcntl_fork();
+            if ($pid == -1) {
+                DahuaLog::error('fork impossible pour la sonde des caméras');
+                return;
+            }
+            if ($pid > 0) {
+                /*
+                 * Un seul NVR sondé par tour, comme connectPending() ne tente
+                 * qu'une connexion : sur une installation multi-NVR, huit forks
+                 * simultanés feraient plus de mal que la panne qu'on surveille.
+                 *
+                 * Le fils n'est volontairement pas suivi : reapChildren() fait un
+                 * waitpid(-1) et récolte n'importe quel fils, donc un waitpid
+                 * ciblé retournerait -1 et serait pris pour « encore en cours ».
+                 * C'est le bug qui avait bloqué la file d'envoi.
+                 */
+                return;
+            }
+
+            // --- processus fils ---
+            $this->closeInheritedSockets();
+            $states = $this->fetchCameraStates($client->config);
+            if ($states !== false) {
+                $this->callback('', array('events' => array(array(
+                    'nvr_id'   => $client->id(),
+                    'type'     => 'camera_status',
+                    'channels' => $states,
+                    'time'     => date('Y-m-d H:i:s'),
+                ))));
+            }
+            exit(0);
+        }
+    }
+
+    /*
+     * Relève l'état de tous les canaux d'un NVR.
+     * Retourne array(canal 1-based => 0|1), ou false si le NVR n'a pas répondu —
+     * une absence de réponse ne doit jamais être lue comme « toutes les caméras
+     * sont tombées ».
+     */
+    private function fetchCameraStates($_nvrConfig) {
+        $httpPort = isset($_nvrConfig['http_port']) && (int) $_nvrConfig['http_port'] > 0
+                  ? (int) $_nvrConfig['http_port'] : 80;
+        $url = 'http://' . $_nvrConfig['ip'] . ':' . $httpPort
+             . '/cgi-bin/configManager.cgi?action=getConfig&name=RemoteDevice';
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, array(
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPAUTH       => CURLAUTH_DIGEST,
+            CURLOPT_USERPWD        => $_nvrConfig['username'] . ':' . $_nvrConfig['password'],
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => self::PROBE_TIMEOUT,
+        ));
+        $body  = curl_exec($ch);
+        $code  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        if ($body === false || $code != 200) {
+            DahuaLog::warning('relevé de l\'état des caméras impossible : '
+                            . $this->snapshotFailure($errno, $error, $code));
+            return false;
+        }
+        return $this->parseRemoteDevice($body);
+    }
+
+    /*
+     * Deux formes de clés coexistent selon les firmwares :
+     *   table.RemoteDevice[2].DeviceType=...
+     *   table.RemoteDevice.uuid:System_CONFIG_NETCAMERA_INFO_2.DeviceType=...
+     * L'index est 0-based dans les deux cas, le canal vaut index + 1.
+     *
+     * Critère d'état, vérifié sur le matériel : une caméra que le NVR ne voit plus
+     * a SerialNo, DeviceType et Version VIDES, et perd ses champs
+     * VideoInputChannels / AudioInputChannels / AlarmInChannels. On croise deux
+     * signaux indépendants plutôt que de se fier à un seul champ.
+     */
+    private function parseRemoteDevice($_body) {
+        $devices = array();
+        foreach (explode("\n", $_body) as $line) {
+            if (!preg_match('/^table\.RemoteDevice(?:\[(\d+)\]|\.uuid:\S*?_(\d+))\.(\w+)=(.*)$/',
+                            trim($line), $m)) {
+                continue;
+            }
+            $index = ($m[1] !== '') ? (int) $m[1] : (int) $m[2];
+            $devices[$index][$m[3]] = trim($m[4]);
+        }
+        if (empty($devices)) {
+            DahuaLog::warning('réponse RemoteDevice inexploitable, état des caméras inchangé');
+            return false;
+        }
+        $states = array();
+        foreach ($devices as $index => $fields) {
+            $states[$index + 1] = (!empty($fields['SerialNo']) && !empty($fields['VideoInputChannels']))
+                                ? 1 : 0;
+        }
+        return $states;
     }
 
     /*
@@ -1062,11 +1212,18 @@ class DahuaDaemon {
             if ($ok) {
                 DahuaLog::info($client->name() . ' connecté en ' . $client->label());
                 $client->scheduleRetry(0, true);
+                /*
+                 * Sonde au prochain tour, sans attendre la période : à la
+                 * reconnexion, Jeedom a remis toutes les caméras à 0 et les
+                 * afficherait perdues pendant une minute entière.
+                 */
+                unset($this->lastCameraProbe[$client->id()]);
                 $this->push(array(array(
-                    'nvr_id' => $client->id(),
-                    'type'   => 'status',
-                    'status' => 'connected',
-                    'time'   => date('Y-m-d H:i:s'),
+                    'nvr_id'    => $client->id(),
+                    'type'      => 'status',
+                    'status'    => 'connected',
+                    'transport' => $client->label(),
+                    'time'      => date('Y-m-d H:i:s'),
                 )));
                 return;
             }

@@ -415,11 +415,24 @@ function dahuaAddRule() {
    avec une configuration de règle vide. */
 function saveEqLogic(_eqLogic) {
   var select = document.getElementById('sel_dahuaType')
-  if (select === null || select.value !== 'rule') {
+  if (select === null) {
     return _eqLogic
   }
   if (!isset(_eqLogic.configuration)) {
     _eqLogic.configuration = {}
+  }
+  /* Les actions de perte de caméra vivent sur le NVR : c'est lui qui sait
+     qu'une caméra est tombée, et une notification unique se configure une
+     seule fois. Collectées avant le retour anticipé ci-dessous. */
+  if (select.value === 'nvr') {
+    _eqLogic.configuration.camera_lost_actions =
+      document.querySelectorAll('#div_dahuaLostActions .dahuaRuleAction').getJeeValues('.expressionAttr')
+    _eqLogic.configuration.camera_back_actions =
+      document.querySelectorAll('#div_dahuaBackActions .dahuaRuleAction').getJeeValues('.expressionAttr')
+    return _eqLogic
+  }
+  if (select.value !== 'rule') {
+    return _eqLogic
   }
   _eqLogic.configuration.conditions =
     document.querySelectorAll('#table_dahuaConditions tbody tr.dahuaRuleCondition').getJeeValues('.ruleAttr')
@@ -468,7 +481,12 @@ function printEqLogic(_eqLogic) {
     }
   }
 
-  var containers = { div_dahuaRuleActions: 'actions', div_dahuaRuleActionsEnd: 'actions_end' }
+  var containers = {
+    div_dahuaRuleActions: 'actions',
+    div_dahuaRuleActionsEnd: 'actions_end',
+    div_dahuaLostActions: 'camera_lost_actions',
+    div_dahuaBackActions: 'camera_back_actions'
+  }
   for (var id in containers) {
     var container = document.getElementById(id)
     if (container === null) {

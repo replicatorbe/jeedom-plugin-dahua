@@ -95,6 +95,55 @@ function dahuaEventDate($_event) {
     return $_event['time'];
 }
 
+/*
+ * Tags offerts aux actions. #date# et #time# sont volontairement absents : le
+ * coeur les résout déjà lui-même, les redéfinir casserait le comportement attendu.
+ */
+function dahuaCameraTags($_nvr, $_cam, $_channel, $_state) {
+    return array(
+        '#camera#'  => $_cam->getName(),
+        '#channel#' => (string) $_channel,
+        '#nvr#'     => $_nvr->getName(),
+        '#state#'   => $_state,
+    );
+}
+
+/*
+ * Une caméra vient d'être perdue.
+ *
+ * Deux garde-fous pour tenir la promesse « une seule notification » :
+ *  - l'appelant n'entre ici que sur une vraie bascule 1 -> 0 ;
+ *  - 'fired' retient qu'une perte a déjà été signalée, et survit au redémarrage
+ *    du démon, qui resonde et republie tout ce qu'il sait. Sans lui, chaque
+ *    relance du démon renotifierait toutes les caméras déjà perdues.
+ */
+function dahuaCameraLost($_nvr, $_cam, $_channel) {
+    $state = dahua::camState($_cam->getId());
+    if ($state['fired'] > 0) {
+        return;
+    }
+    log::add('dahua', 'warning', $_cam->getHumanName() . ' ' . __('hors ligne', __FILE__));
+    dahua::saveCamState($_cam->getId(), array('fired' => time()));
+    dahua::runActions($_nvr, 'camera_lost_actions',
+        dahuaCameraTags($_nvr, $_cam, $_channel, __('hors ligne', __FILE__)), false);
+}
+
+/*
+ * Retour en ligne. On ne joue les actions de retour que si une perte a
+ * réellement été signalée : sinon la création des commandes sur une
+ * installation existante annoncerait le retour de caméras jamais tombées.
+ */
+function dahuaCameraBack($_nvr, $_cam, $_channel) {
+    $state = dahua::camState($_cam->getId());
+    log::add('dahua', 'info', $_cam->getHumanName() . ' ' . __('de nouveau en ligne', __FILE__));
+    if ($state['fired'] == 0) {
+        return;
+    }
+    dahua::saveCamState($_cam->getId(), array('fired' => 0));
+    dahua::runActions($_nvr, 'camera_back_actions',
+        dahuaCameraTags($_nvr, $_cam, $_channel, __('en ligne', __FILE__)), false);
+}
+
 function handleDahuaEvent($_event) {
     $nvrId = isset($_event['nvr_id']) ? (int) $_event['nvr_id'] : 0;
     $nvr   = dahua::byId($nvrId);
@@ -110,8 +159,17 @@ function handleDahuaEvent($_event) {
     if ($type == 'status') {
         $online = (isset($_event['status']) && $_event['status'] == 'connected') ? 1 : 0;
         $nvr->checkAndUpdateCmd('online', $online);
+        if (isset($_event['transport'])) {
+            dahua::rememberTransport($nvr->getId(), $_event['transport']);
+        }
         if ($online) {
             log::add('dahua', 'info', $nvr->getHumanName() . ' ' . __('connecté', __FILE__));
+            /*
+             * Les états caméra restent à 0 jusqu'à la première sonde : un NVR
+             * joignable ne prouve rien sur ses caméras. Le démon sonde aussitôt
+             * après connexion, l'attente est donc de l'ordre de la seconde.
+             */
+            $nvr->publishCamStatus();
             return;
         }
 
@@ -133,7 +191,23 @@ function handleDahuaEvent($_event) {
                     $cmd->event(0);
                 }
             }
+            /*
+             * La joignabilité suit le même sort : afficher « en ligne » une caméra
+             * que Jeedom ne peut plus vérifier est le pire des deux mensonges pour
+             * une supervision. Distinguer « caméra morte » de « NVR muet » se fait
+             * en regardant l'état du NVR, qui est juste à côté dans la tuile.
+             *
+             * Aucune action n'est jouée sur ce chemin, et c'est délibéré : une
+             * déconnexion du NVR n'est pas la perte de huit caméras. L'utilisateur
+             * est prévenu une fois, par le NVR. Sans cette réserve, le moindre
+             * hoquet réseau enverrait huit notifications, puis huit retours.
+             */
+            $cmd = $cam->getCmd('info', 'online');
+            if (is_object($cmd) && $cmd->execCmd() == 1) {
+                $cmd->event(0);
+            }
         }
+        $nvr->publishCamStatus();
         return;
     }
 
@@ -145,6 +219,59 @@ function handleDahuaEvent($_event) {
         $cam = dahua::byLogicalId('cam::' . $nvrId . '::' . (int) $_event['channel'], 'dahua');
         if (is_object($cam)) {
             $cam->checkAndUpdateCmd('snapshot', $_event['url'], $date);
+        }
+        return;
+    }
+
+    /* --- Sonde de joignabilité des caméras ---------------------------------- */
+    /*
+     * Ce n'est pas un événement du NVR : une caméra PoE qui décroche ne produit
+     * ni VideoLoss ni NetMonitorAbort, elle se tait. Le démon interroge donc
+     * périodiquement l'état des canaux et pousse le relevé complet ici.
+     *
+     * Ce bloc DOIT rester avant le contrôle « $code == '' » plus bas : une sonde
+     * ne porte pas de code d'événement et s'y ferait jeter sans la moindre trace.
+     */
+    if ($type == 'camera_status') {
+        if (!isset($_event['channels']) || !is_array($_event['channels'])) {
+            return;
+        }
+        $changed = false;
+        foreach ($_event['channels'] as $channel => $up) {
+            // 1-based, comme snapshot.cgi et ptz.cgi — et non l'Index 0-based des événements.
+            $cam = dahua::byLogicalId('cam::' . $nvrId . '::' . (int) $channel, 'dahua');
+            if (!is_object($cam)) {
+                continue;
+            }
+            $cmd = $cam->getCmd('info', 'online');
+            if (!is_object($cmd)) {
+                log::add('dahua', 'warning', $cam->getHumanName() . ' '
+                       . __('sans commande de joignabilité : enregistrez l\'équipement', __FILE__));
+                continue;
+            }
+            /*
+             * Le front est calculé AVANT écriture, et jamais déduit du retour de
+             * checkAndUpdateCmd() : le coeur y répond « true » à valeur inchangée
+             * dès qu'on lui passe une date plus récente (eqLogic.class.php:693).
+             * S'en servir déclencherait les actions à CHAQUE sonde.
+             */
+            $before = (string) $cmd->execCmd();
+            $value  = ((int) $up == 1) ? 1 : 0;
+            $cam->checkAndUpdateCmd('online', $value, $date);
+            if ((string) $value !== $before) {
+                $changed = true;
+            }
+            if ($before === '') {
+                continue;                             // première observation : pas une bascule
+            }
+            if ((int) $before === 1 && $value === 0) {
+                dahuaCameraLost($nvr, $cam, (int) $channel);
+            } elseif ((int) $before === 0 && $value === 1) {
+                dahuaCameraBack($nvr, $cam, (int) $channel);
+            }
+        }
+        if ($changed) {
+            $nvr->publishCamStatus();
         }
         return;
     }
