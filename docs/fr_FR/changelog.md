@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5 — 15/09/2026
+
+**Supervision des caméras**
+
+- Une caméra qui décroche est maintenant signalée. Jusqu'ici elle se taisait,
+  simplement : un NVR ne produit aucun événement quand il perd une caméra — ni
+  perte vidéo, ni coupure de liaison. Le démon interroge donc leur état à
+  intervalle régulier, réglable dans la configuration du plugin (60 secondes par
+  défaut, 0 pour désactiver).
+- La tuile du NVR affiche l'état de toutes ses caméras d'un seul coup d'oeil,
+  avec la santé du NVR au-dessus. Une caméra perdue depuis longtemps se
+  distingue d'un incident du jour, et quand le NVR lui-même est injoignable la
+  grille est estompée : son état n'est alors plus vérifiable.
+- Des actions peuvent être jouées quand une caméra est perdue, et quand elle
+  revient. Elles se configurent sur le NVR et ne sont jouées qu'une fois par
+  perte, pas à chaque vérification. Une déconnexion du NVR ne les déclenche pas :
+  elle n'est pas la perte de toutes les caméras.
+- Chaque caméra porte une commande « Connectée », historisée, utilisable dans
+  vos scénarios.
+
+**Correctifs**
+
+- L'objet parent d'un NVR se transmet désormais à ses caméras à chaque
+  enregistrement, et non plus seulement à leur création. Un NVR rattaché à un
+  objet après coup laissait toutes ses caméras invisibles sur le dashboard.
+
 ## 0.4.1 — 13/09/2026
 
 **Correctifs**
