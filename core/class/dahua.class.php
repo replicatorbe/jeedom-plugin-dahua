@@ -916,8 +916,9 @@ class dahua extends eqLogic {
             }
         }
 
-        $cams = array();
-        $up   = 0;
+        $cams    = array();
+        $up      = 0;
+        $watched = 0;                                 // hors caméras désactivées
         foreach (self::camerasOf($this->getId()) as $cam) {
             $state = $cam->getCmd('info', 'online');
             $entry = array('n' => $cam->getName());
@@ -930,8 +931,10 @@ class dahua extends eqLogic {
             } elseif ((int) $state->execCmd() == 1) {
                 $entry['s'] = 1;
                 $up++;
+                $watched++;
             } else {
                 $entry['s'] = 0;
+                $watched++;
                 $since = strtotime((string) $state->getValueDate());
                 if ($since !== false && $since > 0) {
                     $entry['since'] = $since;
@@ -948,7 +951,9 @@ class dahua extends eqLogic {
                 'st' => $storageOk ? 1 : 0,
             ),
             'on'    => $up,
-            'total' => count($cams),
+            // Compte les caméras réellement surveillées : afficher « 7/8 » parce
+            // qu'une caméra est désactivée ferait croire à une panne.
+            'total' => $watched,
             'c'     => $cams,
         );
 
@@ -1069,9 +1074,16 @@ class dahua extends eqLogic {
     }
 
     /* Les caméras rattachées à un NVR, dans l'ordre des canaux. */
+    /*
+     * Les caméras DÉSACTIVÉES sont incluses volontairement. Les écarter les
+     * faisait disparaître de la tuile, et le total passait de 8 à 7 sans rien
+     * dire — on ne distingue plus « je l'ai éteinte » de « elle a disparu ».
+     * Elles sont affichées à part, en gris ; le coeur refuse de toute façon
+     * toute mise à jour de commande sur un équipement désactivé.
+     */
     public static function camerasOf($_nvrId) {
         $cams = array();
-        foreach (self::byTypeAndSearchConfiguration('dahua', array('type' => self::TYPE_CAMERA), true) as $cam) {
+        foreach (self::byTypeAndSearchConfiguration('dahua', array('type' => self::TYPE_CAMERA)) as $cam) {
             if ($cam->getConfiguration('nvr_id') == $_nvrId) {
                 $cams[(int) $cam->getConfiguration('channel')] = $cam;
             }
@@ -1258,6 +1270,52 @@ class dahua extends eqLogic {
                 'advice' => $ok ? '' : __('Vérifiez l\'adresse, les identifiants et que le NVR est joignable', __FILE__),
                 'state'  => $ok,
             );
+        }
+
+        /*
+         * Un équipement sans objet parent n'apparaît sur AUCUN dashboard : le
+         * coeur ne construit ses conteneurs qu'à partir des objets. Rien ne le
+         * signalait, et l'installation paraissait simplement ne rien faire —
+         * on cherche alors le défaut dans le plugin, jamais dans un champ vide.
+         */
+        $orphans = array();
+        foreach (self::byType(__CLASS__) as $eqLogic) {
+            if ($eqLogic->getObject_id() == '') {
+                $orphans[] = $eqLogic->getName();
+            }
+        }
+        if (count($orphans) > 0) {
+            $return[] = array(
+                'test'   => __('Équipements sans objet parent', __FILE__),
+                'result' => implode(', ', $orphans),
+                'advice' => __('Invisibles sur le dashboard tant qu\'ils ne sont rattachés à aucun objet. Renseignez « Objet parent » sur le NVR : ses caméras en hériteront au prochain enregistrement.', __FILE__),
+                'state'  => false,
+            );
+        }
+
+        /*
+         * Caméras perdues. L'information est déjà dans la tuile, mais l'onglet
+         * Santé est l'endroit où l'on vient chercher ce qui ne va pas.
+         */
+        foreach (self::byTypeAndSearchConfiguration(__CLASS__, array('type' => self::TYPE_NVR), true) as $nvr) {
+            $lost = array();
+            foreach (self::camerasOf($nvr->getId()) as $cam) {
+                if ($cam->getIsEnable() == 0) {
+                    continue;                         // éteinte volontairement
+                }
+                $cmd = $cam->getCmd('info', 'online');
+                if (is_object($cmd) && $cmd->execCmd() !== '' && (int) $cmd->execCmd() == 0) {
+                    $lost[] = $cam->getName();
+                }
+            }
+            if (count($lost) > 0) {
+                $return[] = array(
+                    'test'   => $nvr->getName() . ' — ' . __('caméras injoignables', __FILE__),
+                    'result' => implode(', ', $lost),
+                    'advice' => __('Le NVR ne voit plus ces caméras : vérifiez leur alimentation et leur câblage. Leurs échecs de capture sont normaux tant qu\'elles sont absentes.', __FILE__),
+                    'state'  => false,
+                );
+            }
         }
 
         /*
