@@ -111,6 +111,20 @@ function dahua_migrateCameraOnline() {
         }
         try {
             $eqLogic->postSave();
+            /*
+             * addCmdIfMissing() ne touche jamais une commande déjà là — c'est ce
+             * qui protège la personnalisation de l'utilisateur. Conséquence : sur
+             * une installation existante, « Connecté » reste visible ET le widget
+             * affiche la même information dans son bandeau. On masque donc ici,
+             * une seule fois, ce que la création pose désormais masqué.
+             */
+            if ($type == dahua::TYPE_NVR) {
+                $cmd = $eqLogic->getCmd('info', 'online');
+                if (is_object($cmd) && $cmd->getIsVisible() == 1) {
+                    $cmd->setIsVisible(0);
+                    $cmd->save();
+                }
+            }
         } catch (Throwable $e) {
             log::add('dahua', 'error', 'migration ' . $eqLogic->getName() . ' : ' . $e->getMessage());
         }
