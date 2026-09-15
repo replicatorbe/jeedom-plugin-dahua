@@ -1119,12 +1119,17 @@ class DahuaDaemon {
             $this->closeInheritedSockets();
             $states = $this->fetchCameraStates($client->config);
             if ($states !== false) {
-                $this->callback('', array('events' => array(array(
+                DahuaLog::debug($client->name() . ' état des caméras : '
+                              . count(array_filter($states)) . '/' . count($states) . ' en ligne');
+                $sent = $this->callback('', array('events' => array(array(
                     'nvr_id'   => $client->id(),
                     'type'     => 'camera_status',
                     'channels' => $states,
                     'time'     => date('Y-m-d H:i:s'),
                 ))));
+                if ($sent === false) {
+                    DahuaLog::error($client->name() . ' état des caméras non transmis à Jeedom');
+                }
             }
             exit(0);
         }
