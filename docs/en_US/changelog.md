@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5 — 2026-09-15
+
+**Camera monitoring**
+
+- A camera that drops off is now reported. Until now it simply went quiet: an
+  NVR emits no event when it loses a camera — neither video loss nor link
+  failure. The daemon therefore polls their state at a regular interval,
+  configurable in the plugin settings (60 seconds by default, 0 to disable).
+- The NVR tile shows the state of every camera at a glance, with the NVR's own
+  health above it. A camera lost long ago is told apart from a fresh incident,
+  and when the NVR itself is unreachable the grid is dimmed: camera state can no
+  longer be verified.
+- Actions can be run when a camera is lost, and when it comes back. They are
+  configured on the NVR and run once per loss, not on every check. An NVR
+  disconnection does not trigger them: it is not the loss of every camera.
+- Each camera carries a "Connected" command, historised, usable in your
+  scenarios.
+
+**Fixes**
+
+- A NVR's parent object is now passed on to its cameras on every save, not only
+  when they are created. Attaching a NVR to an object after the fact used to
+  leave all its cameras invisible on the dashboard.
+
 ## 0.4.1 — 2026-09-13
 
 **Fixes**
