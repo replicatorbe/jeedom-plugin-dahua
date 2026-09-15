@@ -495,52 +495,14 @@ class dahuaRule {
      * ou une variable, et honore les options « désactivée » et « en tâche de
      * fond » posées par le sélecteur.
      */
+    /*
+     * Le dispatcher vit désormais dans la classe principale, la supervision des
+     * caméras s'en servant aussi. La garde anti-boucle reste active ici : une
+     * règle dont « Tester » serait posé comme sa propre action boucherait
+     * indéfiniment.
+     */
     public static function runActions($_rule, $_key) {
-        $actions = $_rule->getConfiguration($_key);
-        if (!is_array($actions)) {
-            return;
-        }
-        foreach ($actions as $action) {
-            $expression = isset($action['cmd']) ? trim((string) $action['cmd']) : '';
-            if ($expression == '') {
-                continue;
-            }
-            /*
-             * Une action visant une commande de la règle elle-même la relancerait
-             * indéfiniment — « Tester » posé comme sa propre action suffirait à
-             * boucler. Le coeur pose la même garde sur les zones cliquables d'un
-             * design (plan.class.php).
-             */
-            if (self::targetsSelf($_rule, $expression)) {
-                log::add('dahua', 'warning', $_rule->getHumanName() . ' '
-                       . __('action ignorée, elle vise la règle elle-même :', __FILE__) . ' ' . $expression);
-                continue;
-            }
-            $options = (isset($action['options']) && is_array($action['options']))
-                     ? $action['options'] : array();
-            // 'source' sert de libellé d'origine, notamment au bloc « message » du
-            // coeur, qui en fait le nom de plugin affiché. Une chaîne lisible donc,
-            // comme le fait le coeur lui-même.
-            $options['source'] = $_rule->getHumanName();
-            try {
-                scenarioExpression::createAndExec('action', $expression, $options);
-            } catch (Throwable $e) {
-                // Une action en échec ne doit pas empêcher les suivantes : une
-                // notification cassée ne doit pas retenir la sirène.
-                log::add('dahua', 'error', $_rule->getHumanName() . ' '
-                       . __('action en échec :', __FILE__) . ' ' . $expression
-                       . ' — ' . $e->getMessage());
-            }
-        }
-    }
-
-    private static function targetsSelf($_rule, $_expression) {
-        $id = str_replace('#', '', cmd::humanReadableToCmd($_expression));
-        if (!is_numeric($id)) {
-            return false;
-        }
-        $cmd = cmd::byId($id);
-        return is_object($cmd) && $cmd->getEqLogic_id() == $_rule->getId();
+        dahua::runActions($_rule, $_key, array(), true);
     }
 
     /* ================================================================ RETOUR */

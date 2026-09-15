@@ -29,6 +29,7 @@ function dahua_install() {
 function dahua_update() {
     dahua_prepareData();
     dahua_migrateCommands();
+    dahua_migrateCameraOnline();
 }
 
 function dahua_remove() {
@@ -86,4 +87,33 @@ function dahua_migrateCommands() {
         }
     }
     config::save('migration::widgets', 1, 'dahua');
+}
+
+/*
+ * Crée la commande de joignabilité sur les caméras déjà en place et la tuile de
+ * synthèse sur les NVR existants.
+ *
+ * Une clé de migration NEUVE est indispensable : « migration::widgets » vaut
+ * déjà 1 sur toute installation mise à jour une fois, et cette fonction-là sort
+ * aussitôt. Réutiliser sa clé ne créerait donc rien, en silence.
+ *
+ * postSave() fait tout le travail — création des commandes manquantes, puis
+ * nettoyage de celles de l'autre type. On ne duplique pas cette logique ici.
+ */
+function dahua_migrateCameraOnline() {
+    if (config::byKey('migration::camera_online', 'dahua', 0) == 1) {
+        return;
+    }
+    foreach (eqLogic::byType('dahua') as $eqLogic) {
+        $type = $eqLogic->getConfiguration('type');
+        if ($type != dahua::TYPE_CAMERA && $type != dahua::TYPE_NVR) {
+            continue;
+        }
+        try {
+            $eqLogic->postSave();
+        } catch (Throwable $e) {
+            log::add('dahua', 'error', 'migration ' . $eqLogic->getName() . ' : ' . $e->getMessage());
+        }
+    }
+    config::save('migration::camera_online', 1, 'dahua');
 }

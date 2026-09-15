@@ -259,6 +259,24 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 								<span class="help-block" style="margin:0;">{{La découverte crée un équipement par canal nommé sur le NVR. Enregistrez l'équipement avant de lancer la découverte.}}</span>
 							</div>
 						</div>
+
+						<legend><i class="fas fa-video-slash"></i> {{Caméra perdue}}</legend>
+						<div class="form-group">
+							<div class="col-sm-offset-1 col-sm-10">
+								<span class="help-block" style="margin:0 0 8px 0;">{{Une caméra qui décroche ne produit aucun événement : le NVR n'annonce rien. Le démon vérifie donc leur état régulièrement, et ces actions sont jouées UNE SEULE FOIS au moment où une caméra est perdue — pas à chaque vérification. Tags disponibles : #camera#, #channel#, #nvr#, #state#.}}</span>
+								<div id="div_dahuaLostActions"></div>
+								<a class="btn btn-default btn-sm bt_dahuaAddAction" data-container="div_dahuaLostActions"><i class="fas fa-plus-circle"></i> {{Ajouter une action}}</a>
+							</div>
+						</div>
+
+						<legend><i class="fas fa-video"></i> {{Caméra revenue}}</legend>
+						<div class="form-group">
+							<div class="col-sm-offset-1 col-sm-10">
+								<span class="help-block" style="margin:0 0 8px 0;">{{Jouées quand une caméra précédemment signalée perdue redevient joignable. Une déconnexion du NVR lui-même ne déclenche ni ces actions ni les précédentes : vous êtes prévenu une seule fois, par le NVR.}}</span>
+								<div id="div_dahuaBackActions"></div>
+								<a class="btn btn-default btn-sm bt_dahuaAddAction" data-container="div_dahuaBackActions"><i class="fas fa-plus-circle"></i> {{Ajouter une action}}</a>
+							</div>
+						</div>
 					</fieldset>
 
 					<!-- ========================== CAMÉRA =========================== -->

@@ -40,6 +40,19 @@ if (!isConnect('admin')) {
 	</fieldset>
 
 	<fieldset>
+		<legend><i class="fas fa-video"></i> {{Surveillance des caméras}}</legend>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Intervalle de vérification (s)}}</label>
+			<div class="col-md-2">
+				<input class="configKey form-control" data-l1key="camera_check_interval" placeholder="60">
+			</div>
+			<div class="col-md-5">
+				<span class="help-block" style="margin:0;">{{Une caméra qui décroche ne prévient pas : le NVR n'émet aucun événement. Le démon interroge donc son état à intervalle régulier. 0 désactive la surveillance ; minimum 15 secondes.}}</span>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset>
 		<legend><i class="fas fa-camera"></i> {{Captures d'images}}</legend>
 		<div class="form-group">
 			<label class="col-md-4 control-label">{{Capturer à chaque détection}}</label>
