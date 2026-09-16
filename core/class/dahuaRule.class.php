@@ -382,10 +382,29 @@ class dahuaRule {
         log::add('dahua', 'info', $_rule->getHumanName() . ' ' . __('déclenchée :', __FILE__) . ' ' . $detail);
 
         $_rule->checkAndUpdateCmd('detail', $detail);
-        $image = self::lastImage($_group);
-        if ($image !== '') {
-            $_rule->checkAndUpdateCmd('image', $image);
+
+        /*
+         * Le dossier d'alerte est ouvert AVANT « triggered », et ce n'est pas un
+         * détail d'ordonnancement : un scénario réveillé par le passage à 1 lit
+         * aussitôt « image » pour la joindre à sa notification. Ouvrir le
+         * dossier après lui ferait envoyer l'image du déclenchement précédent —
+         * exactement le défaut que tout ceci corrige.
+         *
+         * Rien ici ne doit pouvoir empêcher le déclenchement : c'est une alarme.
+         * Un disque plein ou un dossier illisible se journalise et la règle
+         * continue son travail.
+         */
+        try {
+            $alertId = dahuaAlert::open($_rule, $_group, $detail, self::namedCameras($_rule));
+            if ($alertId !== '') {
+                dahuaAlert::publish($_rule, $alertId);
+                dahuaAlert::requestLiveShots($alertId);
+            }
+        } catch (Throwable $e) {
+            log::add('dahua', 'error', $_rule->getHumanName() . ' '
+                   . __('dossier d\'alerte non créé :', __FILE__) . ' ' . $e->getMessage());
         }
+
         $_rule->checkAndUpdateCmd('triggered', 1);
 
         self::runActions($_rule, 'actions');
@@ -472,19 +491,35 @@ class dahuaRule {
         return $_logicalId;
     }
 
-    /* Dernière capture de la caméra qui a complété la corrélation : c'est elle
-     * qui intéresse, pas celle de la première détection. */
-    private static function lastImage($_group) {
-        $last = end($_group);
-        if ($last === false || $last['cam'] <= 0) {
-            return '';
+    /*
+     * Les caméras explicitement nommées par les conditions de la règle.
+     *
+     * Sert uniquement de repli quand aucune détection réelle n'a validé le
+     * déclenchement, c'est-à-dire pour le bouton « Tester » : celui-ci
+     * court-circuite l'évaluation et appelle fire() avec un groupe vide, si bien
+     * qu'un test ne produirait aucune image et ne prouverait rien de la chaîne
+     * qu'il est censé vérifier.
+     *
+     * Les conditions en « n'importe quelle caméra » sont ignorées : elles ne
+     * désignent personne, et les traiter comme « toutes » ferait capturer huit
+     * canaux à chaque test.
+     */
+    private static function namedCameras($_rule) {
+        $cameras = array();
+        foreach (self::conditions($_rule) as $condition) {
+            if ($condition['source'] == self::ANY) {
+                continue;
+            }
+            $id = (int) $condition['source'];
+            if ($id <= 0 || isset($cameras[$id])) {
+                continue;
+            }
+            $camera = dahua::byId($id);
+            if (is_object($camera) && $camera->getConfiguration('type') == dahua::TYPE_CAMERA) {
+                $cameras[$id] = $camera;
+            }
         }
-        $camera = dahua::byId($last['cam']);
-        if (!is_object($camera)) {
-            return '';
-        }
-        $snapshot = $camera->getCmd('info', 'snapshot');
-        return is_object($snapshot) ? (string) $snapshot->execCmd() : '';
+        return $cameras;
     }
 
     /* =============================================================== ACTIONS */

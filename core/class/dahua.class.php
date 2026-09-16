@@ -19,6 +19,7 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 /* L'autochargeur de Jeedom ne sait résoudre que la classe portant le nom du
  * plugin : les classes annexes doivent être incluses explicitement. */
 require_once __DIR__ . '/dahuaRule.class.php';
+require_once __DIR__ . '/dahuaAlert.class.php';
 
 class dahua extends eqLogic {
 
@@ -246,15 +247,23 @@ class dahua extends eqLogic {
      * $_waitAnswer = false pour les ordres dont la réponse n'apporte rien : le
      * démon traite « reload » de façon différée et Jeedom n'a pas à l'attendre.
      */
-    public static function sendToDaemon($_payload, $_waitAnswer = true) {
+    public static function sendToDaemon($_payload, $_waitAnswer = true, $_connectTimeout = 5) {
         if (self::deamon_info()['state'] != 'ok') {
             log::add(__CLASS__, 'debug', __('Démon arrêté, ordre ignoré', __FILE__));
             return false;
         }
         $_payload['apikey'] = jeedom::getApiKey(__CLASS__);
+        /*
+         * Le délai de connexion est réglable parce que tous les appelants n'ont
+         * pas le même budget. « reload » part d'un register_shutdown_function,
+         * après la réponse : cinq secondes ne coûtent rien. Un ordre émis depuis
+         * le callback du démon, lui, s'inscrit dans les quatre secondes au bout
+         * desquelles celui-ci abandonne et rejoue tout le lot d'événements — un
+         * délai plus long que son budget lui ferait perdre des détections.
+         */
         $socket = @stream_socket_client(
             'tcp://127.0.0.1:' . config::byKey('socketport', __CLASS__, 55060),
-            $errno, $errstr, 5
+            $errno, $errstr, max(1, (int) $_connectTimeout)
         );
         if ($socket === false) {
             log::add(__CLASS__, 'error', __('Connexion au démon impossible :', __FILE__) . ' ' . $errstr);
@@ -607,7 +616,7 @@ class dahua extends eqLogic {
         foreach (self::$_channelEvents as $def) {
             $camIds[] = $def['logicalId'];
         }
-        $ruleIds = array('triggered', 'detail', 'image', 'rule_test', 'rule_reset');
+        $ruleIds = array('triggered', 'detail', 'image', 'images', 'rule_test', 'rule_reset');
 
         $byType = array(
             self::TYPE_NVR    => $nvrIds,
@@ -680,15 +689,30 @@ class dahua extends eqLogic {
     }
 
     /*
-     * Le cron minute du coeur. Il ne sert qu'à faire retomber les règles dont la
-     * durée de maintien est écoulée alors qu'aucun événement n'arrive plus : une
-     * règle déclenchée en fin de soirée resterait sinon allumée toute la nuit.
+     * Le cron minute du coeur. Deux travaux sans rapport, mais qui ont tous deux
+     * besoin d'un battement régulier plutôt que d'un événement :
+     *
+     *   - faire retomber les règles dont la durée de maintien est écoulée alors
+     *     qu'aucun événement n'arrive plus : une règle déclenchée en fin de
+     *     soirée resterait sinon allumée toute la nuit ;
+     *   - purger les dossiers d'alerte. Délibérément ici, et non à l'écriture :
+     *     la purge des captures courantes, elle, ne se déclenche qu'à
+     *     l'écriture, si bien qu'une caméra devenue muette y laisse ses fichiers
+     *     indéfiniment. Le disque ne doit pas dépendre de l'activité du NVR.
+     *
+     * Les deux sont indépendants : un échec de l'un ne doit pas priver l'autre
+     * de son tour, d'où deux gardes séparées.
      */
     public static function cron() {
         try {
             dahuaRule::checkHold();
         } catch (Throwable $e) {
             log::add(__CLASS__, 'error', __('Retour des règles en échec :', __FILE__) . ' ' . $e->getMessage());
+        }
+        try {
+            dahuaAlert::purge();
+        } catch (Throwable $e) {
+            log::add(__CLASS__, 'error', __('Purge des alertes en échec :', __FILE__) . ' ' . $e->getMessage());
         }
     }
 
@@ -827,10 +851,34 @@ class dahua extends eqLogic {
         $this->addCmdIfMissing('detail', 'Détail du déclenchement', 'info', 'string', array(
             'order' => $order++,
         ));
+        /*
+         * Conservée, et volontairement : des scénarios existants s'en servent
+         * pour joindre une image à une notification. Elle ne porte qu'une URL,
+         * celle de la meilleure image de la dernière alerte — c'est « images »
+         * ci-dessous qui porte le dossier complet.
+         */
         $this->addCmdIfMissing('image', 'Image du déclenchement', 'info', 'string', array(
             'isVisible'    => 0,
             'generic_type' => 'CAMERA_URL',
             'order'        => $order++,
+        ));
+        /*
+         * Le levé de doute. Un seul objet JSON porte toutes les images de
+         * l'alerte : une commande par caméra demanderait autant de
+         * rafraîchissements, qui pourraient se croiser et afficher une grille
+         * mêlant deux déclenchements. Même raisonnement que pour « camstatus ».
+         */
+        /*
+         * Masquée tant que son gabarit n'existe pas : le coeur se rabat alors
+         * sur le rendu par défaut, qui afficherait le JSON brut en travers du
+         * dashboard. Le gabarit est en revanche posé dès maintenant, car
+         * addCmdIfMissing ne retouche jamais une commande déjà créée : sans
+         * cela, rendre la tuile visible plus tard demanderait une migration.
+         */
+        $this->addCmdIfMissing('images', 'Images de l\'alerte', 'info', 'string', array(
+            'isVisible' => 0,
+            'template'  => 'dahua::alert',
+            'order'     => $order++,
         ));
         /*
          * « Tester » joue toutes les actions de la règle, y compris sur des

@@ -1,0 +1,11 @@
+# Exclusions propres au plugin dahua, ajoutées à celles de deploy-plugin.sh.
+# Un motif rsync par ligne ; les lignes vides et celles commençant par # sont
+# ignorées par --exclude-from.
+
+# Les dossiers d'alerte sont produits à l'exécution et n'existent que côté
+# Jeedom. Le déploiement travaille avec --delete : sans cette ligne, chaque
+# déploiement effacerait tout l'historique des alertes — images et descriptions
+# comprises — puisque le dépôt, lui, n'en contient aucun. La perte serait
+# silencieuse : les tuiles se videraient sans la moindre erreur nulle part.
+# data/snapshots/ est déjà exclu par l'outil, pas data/alerts/.
+data/alerts/

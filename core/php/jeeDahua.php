@@ -219,7 +219,74 @@ function handleDahuaEvent($_event) {
         $cam = dahua::byLogicalId('cam::' . $nvrId . '::' . (int) $_event['channel'], 'dahua');
         if (is_object($cam)) {
             $cam->checkAndUpdateCmd('snapshot', $_event['url'], $date);
+            /*
+             * Cette capture est peut-être celle qu'une alerte toute fraîche
+             * attendait. Le démon capture une à deux secondes après l'événement,
+             * alors que la règle, elle, s'est déclenchée pendant le POST de ce
+             * même événement : l'image de la caméra qui a complété la
+             * corrélation arrive donc TOUJOURS après l'ouverture du dossier.
+             * Sans ce rattrapage, c'est justement elle qui manquerait.
+             */
+            try {
+                dahuaAlert::catchUpDetection($cam->getId(), $_event['url']);
+            } catch (Throwable $e) {
+                log::add('dahua', 'error', __('Rattrapage d\'image d\'alerte en échec :', __FILE__)
+                       . ' ' . $e->getMessage());
+            }
         }
+        return;
+    }
+
+    /* --- Capture fraîche d'un dossier d'alerte ------------------------------ */
+    /*
+     * Compte rendu asynchrone d'une capture demandée au déclenchement d'une
+     * règle : le fichier a déjà été écrit (ou non) par le fils du démon, il ne
+     * reste qu'à l'inscrire dans la description de l'alerte.
+     *
+     * Comme la sonde de joignabilité juste en dessous, ce bloc DOIT rester avant
+     * le contrôle « $code == '' » plus bas : un compte rendu de capture ne porte
+     * aucun code d'événement et s'y ferait jeter sans la moindre trace.
+     */
+    if ($type == 'alertshot') {
+        if (!isset($_event['alert'], $_event['camera_id'])) {
+            return;
+        }
+        $alertId = (string) $_event['alert'];
+        /* Liste blanche avant toute chose : cet identifiant, venu du réseau,
+         * compose un chemin sur disque. dahuaAlert le valide, jamais on ne
+         * l'assainit. */
+        if (!dahuaAlert::isValidId($alertId)) {
+            log::add('dahua', 'debug', __('Identifiant d\'alerte invalide, compte rendu ignoré :', __FILE__)
+                   . ' ' . $alertId);
+            return;
+        }
+        $cameraId = (int) $_event['camera_id'];
+        $ok       = isset($_event['ok']) ? (bool) $_event['ok'] : false;
+        $error    = isset($_event['error']) ? (string) $_event['error'] : '';
+        dahuaAlert::noteCapture($alertId, $cameraId, $ok, $error);
+
+        /*
+         * La tuile est republiée par noteCapture() elle-même, sous le verrou de
+         * l'alerte. Le faire ici serait une course perdue d'avance : chaque
+         * caméra poste son compte rendu depuis un fils distinct, donc dans une
+         * requête HTTP distincte, et deux workers qui reliraient puis
+         * publieraient chacun de leur côté écriraient la commande dans un ordre
+         * quelconque — la tuile se figerait alors sur la version la moins
+         * complète, sans que rien ne le signale.
+         */
+
+        $cam = dahua::byId($cameraId);
+        $who = is_object($cam) ? $cam->getHumanName() : (__('caméra', __FILE__) . ' ' . $cameraId);
+        /*
+         * L'échec est journalisé, et pas seulement le succès : c'est le seul
+         * endroit où l'utilisateur pourra comprendre qu'une caméra n'a pas
+         * répondu au déclenchement. Côté dossier d'alerte, une image manquante
+         * est parfaitement muette.
+         */
+        $issue = $ok
+            ? __('capture fraîche enregistrée', __FILE__)
+            : __('capture en échec', __FILE__) . (($error != '') ? ' : ' . $error : '');
+        log::add('dahua', 'debug', __('Alerte', __FILE__) . ' ' . $alertId . ' — ' . $who . ' — ' . $issue);
         return;
     }
 

@@ -815,6 +815,24 @@ class DahuaDaemon {
 
     const SNAPSHOT_TIMEOUT = 15;
 
+    /*
+     * Plus court que la capture ordinaire, et volontairement : une image
+     * d'alerte qui met plus de dix secondes à venir n'apprend plus rien à qui
+     * lève un doute, il est déjà devant son écran. Et ce délai-là est justement
+     * la signature d'une caméra que le NVR a perdue — snapshot.cgi accepte la
+     * requête et ne répond jamais. Autant rendre la main et le dire.
+     */
+    const ALERT_SHOT_TIMEOUT = 10;
+
+    /*
+     * Plafond du nombre de caméras capturées pour une même alerte. Une règle en
+     * « n'importe quelle caméra » sur un gros NVR pourrait en aligner beaucoup,
+     * et chaque caméra ouvre son propre fils : le serveur HTTP embarqué des NVR
+     * est fragile, une rafale de requêtes simultanées le fait cesser de répondre
+     * y compris sur les canaux sains.
+     */
+    const MAX_ALERT_SHOTS = 4;
+
     /* Plus court que la capture : RemoteDevice est une lecture de configuration,
      * un NVR sain répond en moins d'une seconde. */
     const PROBE_TIMEOUT = 8;
@@ -910,7 +928,16 @@ class DahuaDaemon {
         }
         $config = json_decode($raw, true);
         if (!is_array($config) || !isset($config['nvrs'])) {
-            DahuaLog::error('configuration invalide : ' . substr((string) $raw, 0, 200));
+            /*
+             * 80 caractères et pas 200 : cette charge utile contient le mot de
+             * passe du NVR. Il se trouve aujourd'hui au-delà de la troncature,
+             * mais la marge ne tient qu'à l'ordre des clés de getDaemonConfig()
+             * — quelques dizaines d'octets, qu'un réglage ajouté au mauvais
+             * endroit suffirait à effacer. Ce qu'on veut lire ici, c'est le
+             * début de la réponse, pour savoir si c'est une page d'erreur HTML
+             * ou du JSON tronqué : 80 caractères y suffisent largement.
+             */
+            DahuaLog::error('configuration invalide : ' . substr((string) $raw, 0, 80));
             return false;
         }
         $config['pulse_duration']    = isset($config['pulse_duration']) ? (int) $config['pulse_duration'] : 5;
@@ -1491,11 +1518,14 @@ class DahuaDaemon {
      * parfaitement valides : le pire message possible, il envoie chercher là où
      * il n'y a rien. Vérifié : curl_exec vaut false, errno 28, et le code 401.
      */
-    private function snapshotFailure($_errno, $_error, $_code) {
+    private function snapshotFailure($_errno, $_error, $_code, $_timeout = self::SNAPSHOT_TIMEOUT) {
         // CURLE_OPERATION_TIMEOUTED plutôt que son alias CURLE_OPERATION_TIMEDOUT,
         // défini seulement sur les PHP récents.
         if ($_errno == CURLE_OPERATION_TIMEOUTED) {
-            return 'pas de réponse en ' . self::SNAPSHOT_TIMEOUT
+            // Le délai est passé en argument : les captures d'alerte attendent
+            // moins longtemps, et annoncer la mauvaise durée enverrait chercher
+            // un réglage qui n'existe pas.
+            return 'pas de réponse en ' . $_timeout
                  . ' s, liaison avec la caméra probablement coupée';
         }
         if ($_errno != CURLE_OK) {
@@ -1579,6 +1609,82 @@ class DahuaDaemon {
         }
     }
 
+    /*
+     * Capture fraîche déposée dans un dossier d'alerte.
+     *
+     * Volontairement à l'écart de fetchSnapshot() : ni le verrou anti-rafale, ni
+     * la rotation des cinquante captures ne s'appliquent ici. Une alerte doit
+     * toujours obtenir son image — c'est une alarme, pas un événement de cadence
+     * — et cette image doit survivre à la rotation, qui ne garde une caméra
+     * active qu'une trentaine de minutes.
+     *
+     * Retourne true, ou la cause de l'échec en clair : Jeedom l'inscrit dans le
+     * dossier, à la place de l'image.
+     */
+    private function fetchAlertShot($_nvrConfig, $_alertDir, $_channel, $_cameraId) {
+        $httpPort = isset($_nvrConfig['http_port']) && (int) $_nvrConfig['http_port'] > 0
+                  ? (int) $_nvrConfig['http_port'] : 80;
+        // snapshot.cgi attend un canal 1-based, contrairement à l'index des événements.
+        $url = 'http://' . $_nvrConfig['ip'] . ':' . $httpPort
+             . '/cgi-bin/snapshot.cgi?channel=' . $_channel;
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, array(
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPAUTH       => CURLAUTH_DIGEST,
+            CURLOPT_USERPWD        => $_nvrConfig['username'] . ':' . $_nvrConfig['password'],
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => self::ALERT_SHOT_TIMEOUT,
+        ));
+        $image = curl_exec($ch);
+        $code  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $errno = curl_errno($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+
+        // Le NVR répond parfois 200 avec un message d'erreur en texte : on exige
+        // la signature JPEG plutôt que de se fier au code HTTP.
+        if ($image === false || $code != 200 || strlen($image) < 1024 || substr($image, 0, 2) !== "\xFF\xD8") {
+            $cause = $this->snapshotFailure($errno, $error, $code, self::ALERT_SHOT_TIMEOUT);
+            DahuaLog::warning('capture d\'alerte impossible sur le canal ' . $_channel . ' : ' . $cause);
+            return $cause;
+        }
+
+        /*
+         * Ce nom est un contrat avec le dossier d'alerte côté Jeedom : ni la
+         * description de l'alerte, ni le passe-plat qui sert les images ne
+         * reconnaissent autre chose. Un fichier nommé autrement serait écrit
+         * pour rien, et invisible.
+         */
+        $file = $_alertDir . '/cam' . $_cameraId . '_live.jpg';
+        if (@file_put_contents($file, $image) === false) {
+            DahuaLog::error('écriture de la capture d\'alerte impossible dans ' . $_alertDir);
+            return 'écriture impossible';
+        }
+
+        /*
+         * Vignette, aux mêmes 320 px et qualité 80 que celles fabriquées côté
+         * Jeedom : une capture pèse ~610 Ko en 1920x1080, sa vignette 25 Ko, et
+         * une tuile de dashboard qui en affiche quatre les télécharge à chaque
+         * rendu. Son échec n'est pas celui de la capture : l'interface se rabat
+         * alors sur l'image pleine résolution.
+         */
+        if (function_exists('imagecreatefromstring') && function_exists('imagescale')) {
+            $source = @imagecreatefromstring($image);
+            if ($source !== false) {
+                $thumb = @imagescale($source, 320);
+                imagedestroy($source);
+                if ($thumb !== false) {
+                    @imagejpeg($thumb, $_alertDir . '/cam' . $_cameraId . '_live_t.jpg', 80);
+                    imagedestroy($thumb);
+                } else {
+                    DahuaLog::warning('vignette d\'alerte impossible sur le canal ' . $_channel);
+                }
+            }
+        }
+        return true;
+    }
+
     private function reapChildren() {
         while (pcntl_waitpid(-1, $status, WNOHANG) > 0) {
             // vide la table des processus
@@ -1655,6 +1761,116 @@ class DahuaDaemon {
                     $result['state'] = 'error';
                     $result['result'] = 'NVR inconnu';
                 }
+                break;
+
+            /*
+             * Capture fraîche pour un dossier d'alerte ouvert par Jeedom. La
+             * réponse part dès les fils lancés : Jeedom envoie cet ordre sans
+             * attendre les images, une règle qui se déclenche ne doit pas rester
+             * suspendue au temps de réponse d'un NVR.
+             */
+            case 'alertshot':
+                $alert   = isset($order['alert']) ? (string) $order['alert'] : '';
+                $nvrId   = isset($order['nvr_id']) ? (int) $order['nvr_id'] : 0;
+                $cameras = isset($order['cameras']) && is_array($order['cameras'])
+                         ? $order['cameras'] : array();
+
+                /*
+                 * Cet identifiant compose un chemin sur disque : liste blanche,
+                 * jamais d'assainissement — le même contrôle qu'à l'ouverture de
+                 * l'alerte côté Jeedom, et rien d'autre ne passe.
+                 *
+                 * Expression volontairement recopiée de dahuaAlert::isValidId() :
+                 * le démon ne charge pas le coeur de Jeedom, il ne peut donc pas
+                 * appeler cette méthode. Les deux doivent rester identiques au
+                 * caractère près — une divergence serait un défaut en soi, et
+                 * rien ici ne la signalerait.
+                 */
+                if (preg_match('/^\d{8}-\d{6}_r\d+_[0-9a-f]{8}$/D', $alert) !== 1) {
+                    $result['state'] = 'error';
+                    $result['result'] = 'identifiant d\'alerte invalide';
+                    break;
+                }
+                /* L'état de la liaison n'entre pas en compte : snapshot.cgi ne
+                 * dépend pas du transport d'événements. Un NVR en repli CGI, ou
+                 * en pleine reconnexion, sert ses captures normalement — refuser
+                 * ici priverait d'image les alertes des moments agités, qui sont
+                 * justement celles qu'on veut voir. */
+                if (!isset($this->clients[$nvrId])) {
+                    $result['state'] = 'error';
+                    $result['result'] = 'NVR inconnu';
+                    break;
+                }
+
+                /* Le démon ne crée jamais ce dossier, c'est Jeedom qui ouvre
+                 * l'alerte. Absent, il ne reste que deux explications : l'alerte
+                 * a été purgée entre la demande et son exécution, ou
+                 * l'identifiant est inventé. Dans les deux cas on n'écrit rien. */
+                $pluginRoot = realpath(__DIR__ . '/../..');
+                $alertDir = ($pluginRoot === false) ? false : $pluginRoot . '/data/alerts/' . $alert;
+                if ($alertDir === false || !is_dir($alertDir)) {
+                    $result['state'] = 'error';
+                    $result['result'] = 'dossier d\'alerte introuvable';
+                    break;
+                }
+
+                $shots = 0;
+                foreach ($cameras as $camera) {
+                    if ($shots >= self::MAX_ALERT_SHOTS) {
+                        DahuaLog::warning('alerte ' . $alert . ' : au-delà de ' . self::MAX_ALERT_SHOTS
+                                        . ' caméras, les suivantes sont ignorées');
+                        break;
+                    }
+                    if (!is_array($camera)) {
+                        continue;
+                    }
+                    $cameraId = isset($camera['id']) ? (int) $camera['id'] : 0;
+                    $channel  = isset($camera['channel']) ? (int) $camera['channel'] : 0;
+                    if ($cameraId < 1 || $channel < 1) {
+                        continue;
+                    }
+                    $shots++;
+
+                    $pid = pcntl_fork();
+                    if ($pid == -1) {
+                        // Un fork raté ne condamne que cette caméra : les autres
+                        // partent quand même, une image vaut mieux qu'aucune.
+                        DahuaLog::error('fork impossible pour la capture d\'alerte du canal ' . $channel);
+                        continue;
+                    }
+                    if ($pid > 0) {
+                        continue;
+                    }
+
+                    // --- processus fils ---
+                    $this->closeInheritedSockets();
+                    // Le socket de l'ordre est hérité lui aussi : gardé ouvert,
+                    // il tiendrait la connexion de Jeedom jusqu'à la fin de la
+                    // capture, alors que le père y a déjà répondu.
+                    @fclose($_conn);
+
+                    $shot = $this->fetchAlertShot($this->clients[$nvrId]->config, $alertDir, $channel, $cameraId);
+                    $event = array(
+                        'nvr_id'    => $nvrId,
+                        'type'      => 'alertshot',
+                        'alert'     => $alert,
+                        'camera_id' => $cameraId,
+                        'channel'   => $channel,
+                        'ok'        => ($shot === true),
+                        'time'      => date('Y-m-d H:i:s'),
+                    );
+                    if ($shot !== true) {
+                        $event['error'] = (string) $shot;
+                    }
+                    /* Posté dans tous les cas, échec compris : une caméra qui
+                     * n'a pas pu être capturée doit le dire, sinon l'interface
+                     * attend indéfiniment une image qui n'arrivera jamais. Ce
+                     * plugin a déjà connu deux fois cette panne-là, et elle est
+                     * parfaitement muette. */
+                    $this->callback('', array('events' => array($event)));
+                    exit(0);
+                }
+                DahuaLog::info('alerte ' . $alert . ' : ' . $shots . ' capture(s) demandée(s)');
                 break;
 
             case 'status':
