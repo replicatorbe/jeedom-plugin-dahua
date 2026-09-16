@@ -12,6 +12,7 @@
     "requireOsVersion": "11",
     "category": "security",
     "index": "dahua",
+    "display": "alerts",
     "hasDependency": 0,
     "hasOwnDeamon": 1,
     "maxDependancyInstallTime": 5,

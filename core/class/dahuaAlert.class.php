@@ -930,6 +930,11 @@ class dahuaAlert {
             'a'  => isset($_meta['id']) ? $_meta['id'] : '',
             't'  => isset($_meta['time']) ? (int) $_meta['time'] : time(),
             'd'  => isset($_meta['detail']) ? (string) $_meta['detail'] : '',
+            /* « p » n\'est lu par aucune interface : la tuile préfère le « w »
+             * de chaque caméra, pour pouvoir dire LAQUELLE manque plutôt que
+             * combien. Il est conservé parce qu\'il est le seul endroit où le
+             * total est exact, et qu\'une notification ou un scénario peut s\'en
+             * servir sans avoir à parcourir les caméras. */
             'p'  => $pending,
             // Nom distinct du « f » de chaque image, qui est un nom de fichier :
             // deux sens pour une même clé sont une erreur qui attend son heure.

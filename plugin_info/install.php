@@ -31,6 +31,7 @@ function dahua_update() {
     dahua_migrateCommands();
     dahua_migrateCameraOnline();
     dahua_migrateRuleImages();
+    dahua_migrateAlertWidget();
 }
 
 function dahua_remove() {
@@ -181,5 +182,47 @@ function dahua_migrateRuleImages() {
      */
     if ($complete) {
         config::save('migration::rule_images', 1, 'dahua');
+    }
+}
+
+/*
+ * Rend visible la tuile des images d'alerte, et corrige le nom de son gabarit.
+ *
+ * Les règles migrées par la version précédente portent « dahua::alert », un nom
+ * trop générique : la résolution d'un gabarit interroge core/template AVANT le
+ * plugin, si bien qu'un gabarit du coeur portant ce nom prendrait la place de
+ * celui-ci sans la moindre erreur. Elles étaient de plus créées masquées, le
+ * gabarit n'existant pas encore — la tuile aurait affiché du JSON brut.
+ *
+ * addCmdIfMissing() ne retouchant jamais une commande déjà là, c'est ici qu'il
+ * faut le faire, et une seule fois : la visibilité est ensuite la décision de
+ * l'utilisateur, pas la nôtre.
+ */
+function dahua_migrateAlertWidget() {
+    if (config::byKey('migration::alert_widget', 'dahua', 0) == 1) {
+        return;
+    }
+    $complete = true;
+    foreach (eqLogic::byType('dahua') as $eqLogic) {
+        if ($eqLogic->getConfiguration('type') != dahua::TYPE_RULE) {
+            continue;
+        }
+        $cmd = $eqLogic->getCmd('info', 'images');
+        if (!is_object($cmd)) {
+            $complete = false;                        // dahua_migrateRuleImages n'a pas abouti
+            continue;
+        }
+        try {
+            $cmd->setTemplate('dashboard', 'dahua::dahuaAlert');
+            $cmd->setTemplate('mobile', 'dahua::dahuaAlert');
+            $cmd->setIsVisible(1);
+            $cmd->save();
+        } catch (Throwable $e) {
+            $complete = false;
+            log::add('dahua', 'error', 'migration ' . $eqLogic->getName() . ' : ' . $e->getMessage());
+        }
+    }
+    if ($complete) {
+        config::save('migration::alert_widget', 1, 'dahua');
     }
 }

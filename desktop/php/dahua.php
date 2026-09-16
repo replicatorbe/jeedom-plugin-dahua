@@ -39,6 +39,21 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 				<br>
 				<span>{{Ajouter une règle}}</span>
 			</div>
+			<!--
+				Historique des alertes. Un lien, et non un bouton piloté en
+				JavaScript : le coeur intercepte tout <a> interne pour le charger
+				en AJAX (jeedomUtils.loadPage), si bien qu'un href suffit et que
+				desktop/js/dahua.js n'a rien à connaître de cette page. Le <div>
+				intérieur est indispensable : les règles de mise en forme des
+				tuiles ciblent « div.cursor », pas l'ancre.
+			-->
+			<a href="index.php?v=d&amp;m=dahua&amp;p=alerts" style="text-decoration:none;">
+				<div class="cursor logoSecondary">
+					<i class="fas fa-history"></i>
+					<br>
+					<span>{{Historique des alertes}}</span>
+				</div>
+			</a>
 			<div class="cursor eqLogicAction logoSecondary" data-action="gotoPluginConf">
 				<i class="fas fa-wrench"></i>
 				<br>
