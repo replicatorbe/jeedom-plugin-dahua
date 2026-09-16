@@ -30,6 +30,7 @@ function dahua_update() {
     dahua_prepareData();
     dahua_migrateCommands();
     dahua_migrateCameraOnline();
+    dahua_migrateRuleImages();
 }
 
 function dahua_remove() {
@@ -40,8 +41,11 @@ function dahua_remove() {
     }
 }
 
-/* Le dossier des captures doit exister et rester interdit d'accès direct :
- * les images sont servies par core/php/snapshot.php après contrôle de session. */
+/* Les images du plugin doivent exister quelque part et rester interdites d'accès
+ * direct : captures courantes dans data/snapshots, dossiers d'alerte dans
+ * data/alerts. Les unes comme les autres ne sont servies que par
+ * core/php/snapshot.php, après contrôle de session — le .htaccess posé à la
+ * racine de data/ couvre donc les deux. */
 function dahua_prepareData() {
     $dir = __DIR__ . '/../data';
     if (!is_dir($dir)) {
@@ -49,6 +53,9 @@ function dahua_prepareData() {
     }
     if (!is_dir($dir . '/snapshots')) {
         @mkdir($dir . '/snapshots', 0775, true);
+    }
+    if (!is_dir($dir . '/alerts')) {
+        @mkdir($dir . '/alerts', 0775, true);
     }
     @file_put_contents($dir . '/.htaccess', "Order allow,deny\nDeny from all\n");
 }
@@ -130,4 +137,49 @@ function dahua_migrateCameraOnline() {
         }
     }
     config::save('migration::camera_online', 1, 'dahua');
+}
+
+/*
+ * Donne aux règles déjà créées la commande qui porte les images de leur alerte.
+ *
+ * Sans cette passe, rien ne paraîtrait cassé et tout le serait : postSave() ne
+ * s'exécute qu'à l'enregistrement d'un équipement, et checkAndUpdateCmd() sur
+ * une commande absente retourne false SANS RIEN JOURNALISER. Une règle créée
+ * avant cette version continuerait donc de se déclencher, d'écrire son dossier
+ * d'alerte sur le disque, et n'en montrerait jamais rien — la panne muette dont
+ * ce plugin a déjà fait deux fois les frais.
+ */
+function dahua_migrateRuleImages() {
+    if (config::byKey('migration::rule_images', 'dahua', 0) == 1) {
+        return;
+    }
+    $complete = true;
+    foreach (eqLogic::byType('dahua') as $eqLogic) {
+        if ($eqLogic->getConfiguration('type') != dahua::TYPE_RULE) {
+            continue;
+        }
+        if (is_object($eqLogic->getCmd('info', 'images'))) {
+            continue;
+        }
+        try {
+            /* postSave() plutôt que save() : la commande manquante est créée,
+             * sans repasser par la normalisation du formulaire ni rejouer le
+             * relâchement d'une règle en cours de déclenchement. */
+            $eqLogic->postSave();
+        } catch (Throwable $e) {
+            $complete = false;
+            log::add('dahua', 'error', 'migration ' . $eqLogic->getName() . ' : ' . $e->getMessage());
+        }
+    }
+    /*
+     * Le drapeau n'est posé que si TOUTES les règles sont passées. Le poser
+     * quand même ferait qu'une règle en échec — collision de nom, équipement en
+     * défaut — ne serait jamais retentée, et n'aurait donc jamais sa commande :
+     * elle écrirait ses dossiers d'alerte sans jamais rien afficher. La
+     * migration est sans effet sur une règle déjà traitée, la rejouer ne coûte
+     * rien.
+     */
+    if ($complete) {
+        config::save('migration::rule_images', 1, 'dahua');
+    }
 }

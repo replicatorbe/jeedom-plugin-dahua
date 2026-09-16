@@ -73,4 +73,35 @@ if (!isConnect('admin')) {
 			</div>
 		</div>
 	</fieldset>
+
+	<fieldset>
+		<legend><i class="fas fa-bell"></i> {{Dossiers d'alerte}}</legend>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Capturer une image fraîche à chaque alerte}}</label>
+			<div class="col-md-2">
+				<input type="checkbox" class="configKey" data-l1key="alert_shot">
+			</div>
+			<div class="col-md-5">
+				<span class="help-block" style="margin:0;">{{En plus de l'image du moment de la détection, demander au NVR une capture des caméras concernées à l'instant du déclenchement. Décocher si le NVR est fragile ou la liaison lente.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Alertes conservées}}</label>
+			<div class="col-md-2">
+				<input type="number" min="1" max="5000" step="1" class="configKey form-control" data-l1key="alert_keep" placeholder="300">
+			</div>
+			<div class="col-md-5">
+				<span class="help-block" style="margin:0;">{{Nombre total de dossiers d'alerte gardés, toutes règles confondues : une règle bavarde évince donc l'historique des autres. De 1 à 5000, 300 par défaut ; une valeur vide ou hors bornes revient au défaut. Compter environ 50 Mo par caméra concernée pour 300 alertes.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Alertes conservées en pleine résolution}}</label>
+			<div class="col-md-2">
+				<input type="number" min="0" max="5000" step="1" class="configKey form-control" data-l1key="alert_keep_full" placeholder="30">
+			</div>
+			<div class="col-md-5">
+				<span class="help-block" style="margin:0;">{{Au-delà de ce rang, seules les vignettes et la description sont gardées : l'alerte reste consultable mais perd l'agrandissement. Une image pleine résolution pèse de 600 Ko à 1 Mo, et une alerte en porte jusqu'à deux par caméra. 0 pour ne garder que des vignettes ; la valeur est ramenée à celle du réglage précédent si elle la dépasse.}}</span>
+			</div>
+		</div>
+	</fieldset>
 </form>
