@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.6 — 16/09/2026
+
+**Dossiers d'alerte — le levé de doute**
+
+- Chaque déclenchement d'une règle crée désormais un dossier daté qui lui
+  appartient, avec ses propres images et sa propre description. Les trois
+  défauts de l'« image du déclenchement » tombent d'un coup : elle montrait la
+  capture *précédente*, elle n'en montrait qu'*une*, et le fichier qu'elle
+  désignait disparaissait avec la rotation des captures courantes — une
+  trentaine de minutes sur une caméra active, donc plus rien au matin pour une
+  alerte de la nuit.
+- Chaque caméra concernée apporte jusqu'à deux vues : celle du **moment de la
+  détection**, reprise des captures que le démon prend déjà, et une **capture
+  fraîche** demandée au déclenchement. La première montre l'arrivée, la seconde
+  montre où la personne est allée. C'est la paire qui fait le levé de doute.
+- L'image de la caméra qui complète la corrélation n'existe pas encore quand le
+  dossier s'ouvre : le démon capture une à deux secondes après l'événement. Elle
+  est donc rattrapée à son arrivée, et seulement si elle colle mieux à la
+  détection que celle déjà en place.
+- Une caméra qui n'a rien pu fournir reste affichée, avec la raison. Savoir
+  qu'une caméra n'a pas répondu vaut au moins autant qu'une image : c'est
+  peut-être celle qu'on a coupée.
+
+**Affichage**
+
+- Une tuile de dashboard par règle montre la dernière alerte : les vignettes
+  côte à côte, légendées, cliquables en plein écran.
+- Une page **Historique des alertes** liste tout ce qui est conservé, de la plus
+  récente à la plus ancienne, filtrable par règle et par jour. Elle s'ouvre
+  depuis la page du plugin ou depuis la tuile. La tuile ne montre que la
+  dernière alerte de chaque règle ; s'il y en a eu cinq dans la nuit, c'est ici
+  qu'on retrouve les quatre premières.
+- L'historique se contente d'une session Jeedom, sans exiger le profil
+  administrateur : un levé de doute n'est pas une tâche de configuration. Chaque
+  alerte y est filtrée sur les droits de sa règle.
+
+**Réglages**
+
+- *Capturer une image fraîche à chaque alerte*, à décocher si le NVR est fragile
+  ou la liaison lente.
+- *Alertes conservées* (300 par défaut) et *Alertes conservées en pleine
+  résolution* (30). Au-delà du second rang, seules les vignettes et la
+  description sont gardées : l'alerte reste consultable, elle perd
+  l'agrandissement. Une vignette pèse environ 25 Ko contre 600 Ko à 1 Mo pour
+  l'image entière.
+
+**Correctifs**
+
+- Les libellés des tuiles du plugin sont désormais traduits en anglais ; ils ne
+  l'avaient jamais été.
+
 ## 0.5 — 15/09/2026
 
 **Supervision des caméras**

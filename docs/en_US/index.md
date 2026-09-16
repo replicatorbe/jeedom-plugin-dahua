@@ -204,6 +204,78 @@ Its path on disk is `plugins/dahua/data/snapshots/<file name>` under your Jeedom
 root, and notification plugins that accept a file attachment (Telegram, Mail and
 others) can use it.
 
+## Alert folders
+
+When a cross-detection rule triggers, the plugin files into a dated folder
+everything needed for a visual verification, without having to go after the NVR
+recording.
+
+Every camera involved brings up to two views:
+
+- **At detection** — the image of the moment the camera saw something. It is
+  not taken for the occasion: it is the snapshot the daemon had already made,
+  copied into the folder to shelter it from the snapshot rotation.
+- **At alert time** — a fresh snapshot, asked for at trigger time. It shows
+  where the person went since.
+
+It is the pair that tells you something. On a rule with two cameras, you see
+the arrival on one side and the movement on the other.
+
+The folder stands on its own: its images are never carried off by the snapshot
+rotation, which keeps only about thirty minutes on a busy camera. An alert from
+three in the morning is still complete when you wake up.
+
+### Where to see them
+
+**On the dashboard**, every rule carries an *Alert images* tile showing the
+last trigger. Clicking a thumbnail opens it large.
+
+**In the history**, reachable from the *Alert history* tile on the plugin page,
+or from the link at the bottom of the dashboard tile. The tile only shows the
+last alert of each rule; if there were five during the night, this is where the
+first four are found. The list filters by rule and by day.
+
+This page does not ask for the administrator profile: a visual verification is
+not a configuration task. Every alert there is filtered on the rights of its
+rule, and a restricted user only sees what concerns them. So that they can
+reach it without going through the plugins menu, tick **Show desktop panel** in
+the plugin configuration.
+
+### When a camera does not answer
+
+It stays on display, with the reason — "camera most likely offline",
+"credentials refused", "no answer". This is deliberate: knowing that a camera
+sent nothing back is worth at least as much as an image for a visual
+verification, since it may well be the one that was cut.
+
+A snapshot asked for but never returned is reported as such after a minute,
+rather than being announced as on its way indefinitely.
+
+### Retention
+
+Two stages, set in the plugin configuration:
+
+| Setting | Effect |
+|---|---|
+| Alerts kept | beyond that number, the oldest folders are deleted entirely. |
+| Alerts kept at full resolution | beyond that rank, only the thumbnails and the description remain: the alert can still be read, it loses the enlargement. |
+
+A thumbnail weighs about 25 KB, the whole image 600 KB to 1 MB. With the
+default values (300 and 30), count about fifty megabytes per camera involved.
+The budget is global, all rules taken together: ten rules share the 300
+folders, they do not multiply them.
+
+The purge runs every minute, and not on write: a camera gone quiet leaves
+nothing lying around.
+
+### Attaching an image to a notification
+
+As with the ordinary snapshots, the address served by the plugin requires a
+Jeedom session: an external service will not be able to load it. Attach the
+file rather than the link. The images of an alert are under
+`plugins/dahua/data/alerts/<alert id>/` under your Jeedom root, and the
+*Trigger image* command gives the id in its address.
+
 ## PTZ
 
 The **Go to preset** command recalls a preset stored in the NVR. With no value,
@@ -222,6 +294,9 @@ and the preset must exist in the NVR.
 | Instant event duration | delay after which a binary command falls back to 0 when the NVR does not announce the end of the event. |
 | Capture on every detection | takes an image at the start of every event. |
 | Snapshots kept per camera | beyond that number, the oldest ones are deleted. |
+| Take a fresh snapshot on every alert | asks the NVR for a snapshot of the cameras involved at trigger time, in addition to the image at detection. Uncheck it if the NVR is fragile or the link slow. |
+| Alerts kept | total number of alert folders kept, all rules taken together. |
+| Alerts kept at full resolution | beyond that rank, only the thumbnails and the description remain. |
 
 The local listening port is never exposed to the outside: the daemon only
 listens on the loopback interface, and every order is signed with the plugin API
@@ -360,7 +435,8 @@ you prefer a scenario, simply trigger it on that command.
 |---|---|---|
 | Triggered | info / binary | 1 for the hold time. Historized, generic type `ALARM_STATE`. |
 | Trigger detail | info / string | "NORTH Line crossed 12:00:03 + NORTH Motion 12:00:05" |
-| Trigger image | info / string | Address of the last snapshot of the camera that completed the correlation |
+| Trigger image | info / string | Address of the best image of the last alert — the fresh snapshot if it arrived, otherwise the one at detection. Emptied when the alert has no image, rather than leaving the one from the previous trigger. |
+| Alert images | info / string | All the images of the last alert, with the name of each camera. This is the command that carries the dashboard tile. |
 | Test | action | Plays the trigger for real, actions included. Hidden by default: it runs every action of the rule, including on equipment the dashboard user may have no rights on. |
 | Reset | action | Returns the rule to idle, plays the release actions and forgets pending detections |
 

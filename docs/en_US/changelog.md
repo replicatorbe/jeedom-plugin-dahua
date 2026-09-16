@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.6 — 2026-09-16
+
+**Alert folders — the visual verification**
+
+- Every trigger of a rule now creates a dated folder of its own, with its own
+  images and its own description. The three flaws of the "Trigger image"
+  command fall at once: it showed the *previous* snapshot, it showed only
+  *one*, and the file it pointed at disappeared with the snapshot rotation —
+  about thirty minutes on a busy camera, so nothing left in the morning for a
+  night-time alert.
+- Every camera involved brings up to two views: the one from the **moment of
+  the detection**, taken from the snapshots the daemon already makes, and a
+  **fresh snapshot** asked for at trigger time. The first shows the arrival,
+  the second shows where the person went. It is the pair that makes the visual
+  verification.
+- The image of the camera that completes the correlation does not exist yet
+  when the folder opens: the daemon captures one to two seconds after the
+  event. It is therefore back-filled when it arrives, and only if it fits the
+  detection better than the one already in place.
+- A camera that could provide nothing stays on display, with the reason.
+  Knowing that a camera did not answer is worth at least as much as an image:
+  it may well be the one that was cut.
+
+**Display**
+
+- One dashboard tile per rule shows the last alert: the thumbnails side by
+  side, captioned, clickable full screen.
+- An **Alert history** page lists everything that is kept, from the most recent
+  to the oldest, filterable by rule and by day. It opens from the plugin page
+  or from the tile. The tile only shows the last alert of each rule; if there
+  were five during the night, this is where the first four are found.
+- The history makes do with a Jeedom session, without requiring the
+  administrator profile: a visual verification is not a configuration task.
+  Every alert there is filtered on the rights of its rule.
+
+**Settings**
+
+- *Take a fresh snapshot on every alert*, to be unchecked if the NVR is fragile
+  or the link slow.
+- *Alerts kept* (300 by default) and *Alerts kept at full resolution* (30).
+  Beyond that second rank, only the thumbnails and the description are kept:
+  the alert can still be read, it loses the enlargement. A thumbnail weighs
+  about 25 KB against 600 KB to 1 MB for the whole image.
+
+**Fixes**
+
+- The labels of the plugin tiles are now translated into English; they never
+  had been.
+
 ## 0.5 — 2026-09-15
 
 **Camera monitoring**

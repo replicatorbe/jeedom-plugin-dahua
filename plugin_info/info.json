@@ -1,10 +1,10 @@
 {
     "id": "dahua",
     "name": "Dahua NVR",
-    "pluginVersion": "0.5",
+    "pluginVersion": "0.6",
     "description": {
-        "fr_FR": "Réception en temps réel des événements d'un NVR ou d'une caméra Dahua via le protocole natif DHIP, avec repli automatique sur le long-polling CGI : détection de mouvement, détection intelligente humain et véhicule, franchissement de ligne, perte vidéo, capture d'images, contrôle PTZ et supervision du NVR. Des règles de détection croisée rapprochent plusieurs détections dans une fenêtre de temps pour écarter les faux positifs et déclencher directement des actions Jeedom.",
-        "en_US": "Real-time reception of events from a Dahua NVR or camera over the native DHIP protocol, with automatic fallback to CGI long-polling: motion detection, smart human and vehicle detection, line crossing, video loss, snapshots, PTZ control and NVR monitoring. Cross-detection rules correlate several detections within a time window to discard false positives and run Jeedom actions directly."
+        "fr_FR": "Réception en temps réel des événements d'un NVR ou d'une caméra Dahua via le protocole natif DHIP, avec repli automatique sur le long-polling CGI : détection de mouvement, détection intelligente humain et véhicule, franchissement de ligne, perte vidéo, capture d'images, contrôle PTZ et supervision du NVR. Des règles de détection croisée rapprochent plusieurs détections dans une fenêtre de temps pour écarter les faux positifs et déclencher directement des actions Jeedom. Chaque déclenchement archive les images des caméras concernées, au moment de la détection et à l'instant de l'alerte, consultables depuis le dashboard et depuis un historique.",
+        "en_US": "Real-time reception of events from a Dahua NVR or camera over the native DHIP protocol, with automatic fallback to CGI long-polling: motion detection, smart human and vehicle detection, line crossing, video loss, snapshots, PTZ control and NVR monitoring. Cross-detection rules correlate several detections within a time window to discard false positives and run Jeedom actions directly. Every trigger archives the images of the cameras involved, at detection time and at alert time, viewable from the dashboard and from a history page."
     },
     "licence": "AGPL",
     "author": "sMug (Jérôme Fafchamps)",
