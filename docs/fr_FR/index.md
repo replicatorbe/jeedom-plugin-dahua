@@ -207,6 +207,82 @@ l'adresse. Le chemin sur le disque est
 et les plugins de notification qui acceptent une pièce jointe sur disque
 (Telegram, Mail...) savent l'utiliser.
 
+## Dossiers d'alerte
+
+Quand une règle de détection croisée se déclenche, le plugin range dans un
+dossier daté tout ce qu'il faut pour lever le doute sans aller chercher
+l'enregistrement du NVR.
+
+Chaque caméra concernée y apporte jusqu'à deux vues :
+
+- **À la détection** — l'image du moment où la caméra a vu quelque chose. Elle
+  n'est pas prise pour l'occasion : c'est la capture que le démon avait déjà
+  faite, recopiée dans le dossier pour la mettre à l'abri de la rotation des
+  captures courantes.
+- **À l'instant de l'alerte** — une capture fraîche, demandée au déclenchement.
+  Elle montre où la personne est allée depuis.
+
+C'est la paire qui renseigne. Sur une règle à deux caméras, on voit l'arrivée
+d'un côté et le déplacement de l'autre.
+
+Le dossier est autonome : ses images ne sont jamais emportées par la rotation
+des captures courantes, qui ne conserve qu'une trentaine de minutes sur une
+caméra active. Une alerte de trois heures du matin est encore complète au
+réveil.
+
+### Où les voir
+
+**Sur le dashboard**, chaque règle porte une tuile *Images de l'alerte* qui
+montre le dernier déclenchement. Un clic sur une vignette l'ouvre en grand.
+
+**Dans l'historique**, accessible par la tuile *Historique des alertes* de la
+page du plugin, ou par le lien en bas de la tuile du dashboard. La tuile ne
+montre que la dernière alerte de chaque règle ; s'il y en a eu cinq dans la
+nuit, c'est ici qu'on retrouve les quatre premières. La liste se filtre par
+règle et par jour.
+
+Cette page ne demande pas le profil administrateur : un levé de doute n'est pas
+une tâche de configuration. Chaque alerte y est filtrée sur les droits de sa
+règle, et un utilisateur restreint ne voit que ce qui le concerne. Pour qu'il
+puisse l'atteindre sans passer par le menu des plugins, cochez **Afficher le
+panneau desktop** dans la configuration du plugin.
+
+### Quand une caméra ne répond pas
+
+Elle reste affichée, avec la raison — « caméra probablement hors ligne »,
+« identifiants refusés », « pas de réponse ». C'est volontaire : savoir qu'une
+caméra n'a rien renvoyé est une information de levé de doute au moins aussi
+précieuse qu'une image, puisque c'est peut-être celle qu'on a coupée.
+
+Une capture demandée mais jamais revenue est signalée comme telle passé une
+minute, plutôt que d'être annoncée en route indéfiniment.
+
+### Rétention
+
+Deux étages, réglables dans la configuration du plugin :
+
+| Réglage | Effet |
+|---|---|
+| Alertes conservées | au-delà, les dossiers les plus anciens sont supprimés entièrement. |
+| Alertes conservées en pleine résolution | au-delà de ce rang, seules les vignettes et la description restent : l'alerte se consulte toujours, elle perd l'agrandissement. |
+
+Une vignette pèse environ 25 Ko, l'image entière de 600 Ko à 1 Mo. Avec les
+valeurs par défaut (300 et 30), comptez une cinquantaine de méga-octets par
+caméra concernée. Le budget est global, toutes règles confondues : dix règles se
+partagent les 300 dossiers, elles ne les multiplient pas.
+
+La purge tourne à la minute, et non à l'écriture : une caméra devenue muette n'y
+laisse rien traîner.
+
+### Joindre une image à une notification
+
+Comme pour les captures courantes, l'adresse servie par le plugin demande une
+session Jeedom : un service externe ne pourra pas la charger. Joignez le fichier
+plutôt que le lien. Les images d'une alerte sont sous
+`plugins/dahua/data/alerts/<identifiant de l'alerte>/` à la racine de votre
+Jeedom, et la commande *Image du déclenchement* donne l'identifiant dans son
+adresse.
+
 ## PTZ
 
 La commande **Aller au preset** rappelle un preset enregistré dans le NVR. Sans
@@ -225,6 +301,9 @@ motorisées, et le preset doit exister dans le NVR.
 | Durée des événements instantanés | délai après lequel une commande binaire retombe à 0 quand le NVR n'annonce pas la fin de l'événement. |
 | Capturer à chaque détection | prend une image au début de chaque événement. |
 | Captures conservées par caméra | au-delà, les plus anciennes sont supprimées. |
+| Capturer une image fraîche à chaque alerte | demande au NVR une capture des caméras concernées au moment du déclenchement, en plus de l'image de détection. À décocher si le NVR est fragile ou la liaison lente. |
+| Alertes conservées | nombre total de dossiers d'alerte gardés, toutes règles confondues. |
+| Alertes conservées en pleine résolution | au-delà de ce rang, il ne reste que les vignettes et la description. |
 
 Le port d'écoute local n'est jamais exposé à l'extérieur : le démon n'écoute que
 sur la boucle locale, et chaque ordre est signé par la clé API du plugin.
@@ -371,7 +450,8 @@ les cas : si vous préférez un scénario, déclenchez-le simplement dessus.
 |---|---|---|
 | Déclenchée | info / binaire | 1 pendant la durée de maintien. Historisée, type générique `ALARM_STATE`. |
 | Détail du déclenchement | info / texte | « NORD Ligne franchie 12:00:03 + NORD Mouvement 12:00:05 » |
-| Image du déclenchement | info / texte | Adresse de la dernière capture de la caméra qui a complété la corrélation |
+| Image du déclenchement | info / texte | Adresse de la meilleure image de la dernière alerte — la capture fraîche si elle est arrivée, sinon celle de la détection. Vidée quand l'alerte n'a aucune image, plutôt que de laisser celle du déclenchement précédent. |
+| Images de l'alerte | info / texte | Toutes les images de la dernière alerte, avec le nom de chaque caméra. C'est la commande qui porte la tuile du dashboard. |
 | Tester | action | Joue le déclenchement pour de vrai, actions comprises. Masquée par défaut : elle exécute toutes les actions de la règle, y compris sur des équipements auxquels l'utilisateur du dashboard n'a pas forcément droit. |
 | Réinitialiser | action | Remet la règle au repos, joue les actions de retour et oublie les détections en attente |
 
