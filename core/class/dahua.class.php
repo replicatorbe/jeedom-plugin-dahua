@@ -869,16 +869,15 @@ class dahua extends eqLogic {
          * mêlant deux déclenchements. Même raisonnement que pour « camstatus ».
          */
         /*
-         * Masquée tant que son gabarit n'existe pas : le coeur se rabat alors
-         * sur le rendu par défaut, qui afficherait le JSON brut en travers du
-         * dashboard. Le gabarit est en revanche posé dès maintenant, car
-         * addCmdIfMissing ne retouche jamais une commande déjà créée : sans
-         * cela, rendre la tuile visible plus tard demanderait une migration.
+         * « dahuaAlert » et non « alert » : la résolution d'un gabarit cherche
+         * d'abord dans core/template, et un gabarit du coeur portant le même nom
+         * l'emporterait sans un mot. Le coeur livre déjà cmd.action.other.alert
+         * — un autre type, donc sans conflit aujourd'hui, mais le nom est trop
+         * générique pour qu'on parie sur les versions suivantes.
          */
         $this->addCmdIfMissing('images', 'Images de l\'alerte', 'info', 'string', array(
-            'isVisible' => 0,
-            'template'  => 'dahua::alert',
-            'order'     => $order++,
+            'template' => 'dahua::dahuaAlert',
+            'order'    => $order++,
         ));
         /*
          * « Tester » joue toutes les actions de la règle, y compris sur des

@@ -1,0 +1,458 @@
+<div class="cmd cmd-widget #history#" data-type="info" data-subtype="string" data-template="dahuaAlert" data-state="wait" data-cmd_id="#id#" data-cmd_uid="#uid#" data-version="#version#" data-eqLogic_id="#eqLogic_id#">
+  <div class="title #hide_name#">
+    <div class="cmdName">#name_display#</div>
+  </div>
+  <div class="content">
+    <div class="dahuaAlertWait"></div>
+    <div class="dahuaAlertHead">
+      <span class="dahuaAlertTime"></span>
+      <span class="dahuaAlertDetail"></span>
+    </div>
+    <div class="dahuaAlertGrid"></div>
+    <div class="dahuaAlertFoot">
+      <a class="dahuaAlertHistory" href="index.php?v=d&amp;m=dahua&amp;p=alerts">{{Historique des alertes}}</a>
+    </div>
+  </div>
+  <div class="timeCmd label label-default #history#" data-type="info"></div>
+  <template>
+    <div>time : duration|date ({{Affiche durée ou date de la valeur}})</div>
+  </template>
+  <script>
+    (function () {
+      /*
+       * Avertissement aux traducteurs : les libellés traduisibles de ce script
+       * sont substitués À L\'INTÉRIEUR de chaînes entre apostrophes. Une
+       * traduction qui contiendrait une apostrophe non échappée casserait la
+       * syntaxe du script — tuile morte, et le lot de rafraîchissement du
+       * dashboard avec elle. Dans core/i18n/<langue>.json, les apostrophes de
+       * ces valeurs comme de leurs clés doivent porter une barre oblique
+       * inverse, contrairement aux chaînes venues du PHP.
+       */
+      /* Feuille de style posée une seule fois, comme pour la tuile « Caméras » :
+         le script d\'un gabarit est exécuté à CHAQUE insertion de tuile, et le
+         CSS d\'un plugin n\'est pas chargé sur le dashboard. Le gabarit doit donc
+         se suffire à lui-même, jusqu\'à la fenêtre de plein écran — le mobile ne
+         charge même pas dom.ui.css. Aucune couleur en dur, tout vient du thème. */
+      if (!document.getElementById('dahuaAlertWidgetCss')) {
+        var css = document.createElement('style')
+        css.id = 'dahuaAlertWidgetCss'
+        css.textContent = [
+          '.cmd-widget[data-template="dahuaAlert"]{display:flex;flex-direction:column;align-items:center;width:100%}',
+          '.cmd-widget[data-template="dahuaAlert"] .cmdName{font-size:12px;line-height:16px;font-weight:400;color:var(--txt-color)}',
+          '.cmd-widget[data-template="dahuaAlert"] .content{display:flex;flex-direction:column;align-items:stretch;justify-content:center;width:100%;padding:0 6px 3px;gap:4px}',
+
+          /* Aucune alerte encore : la tuile le dit et cache tout le reste. Une
+             grille vide laisserait croire à une alerte sans image, c\'est-à-dire
+             à une panne des captures, alors que rien ne s\'est encore produit. */
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertWait{display:none;padding:4px 0;font-size:.82em;line-height:1.3;text-align:center;color:var(--txt-color);opacity:.6}',
+          '.cmd-widget[data-template="dahuaAlert"][data-state="wait"] .dahuaAlertWait{display:block}',
+          '.cmd-widget[data-template="dahuaAlert"][data-state="wait"] .dahuaAlertHead,',
+          '.cmd-widget[data-template="dahuaAlert"][data-state="wait"] .dahuaAlertGrid{display:none}',
+
+          /* Le bandeau de tête : heure du déclenchement et libellé. Même fond à
+             peine contrasté que la tuile du NVR, pour que les deux se lisent
+             comme une même famille. */
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertHead{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;width:100%;padding:3px 6px;font-size:.78em;line-height:1.5;color:var(--txt-color);background:var(--btnEq-default-color);border:1px solid transparent;border-radius:var(--border-radius)}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertTime{flex:0 0 auto;font-weight:700}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertDetail{flex:1 1 auto;min-width:0;opacity:.85;overflow-wrap:anywhere}',
+
+          /* auto-fill et non un pourcentage : dans une tuile étroite la grille
+             retombe d\'elle-même sur une seule caméra par ligne. */
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertGrid{display:grid;grid-template-columns:repeat(auto-fill, minmax(min(230px, 100%), 1fr));gap:6px 10px;width:100%}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertCam{display:flex;flex-direction:column;gap:2px;min-width:0}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertCamName{font-size:.78em;font-weight:600;line-height:1.4;color:var(--txt-color);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertShots{display:grid;grid-template-columns:repeat(auto-fill, minmax(min(100px, 100%), 1fr));gap:4px}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertShot{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0}',
+          /* Le rapport de forme est imposé : les vignettes des deux vues d\'une
+             même caméra ne font pas toujours la même taille, et une grille dont
+             les lignes sautent à chaque alerte est illisible. */
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertShot img{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;border-radius:var(--border-radius);background:var(--btnEq-default-color)}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertShot[data-zoom="1"] img{cursor:zoom-in}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertCaption{font-size:.7em;line-height:1.3;color:var(--txt-color);opacity:.7;overflow-wrap:anywhere}',
+
+          /* Une caméra sans image garde sa place et dit pourquoi : c\'est
+             peut-être elle qu\'on a masquée ou débranchée. */
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertNote{max-height:4.5em;overflow:hidden;font-size:.74em;line-height:1.3;color:var(--txt-color);opacity:.7;overflow-wrap:anywhere}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertNote.dahuaAlertBad{opacity:1;font-weight:600;color:var(--al-danger-color)}',
+
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertFoot{width:100%;padding-top:2px;font-size:.72em;line-height:1.4;text-align:right}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertFoot a{color:var(--txt-color);opacity:.55;text-decoration:none}',
+          '.cmd-widget[data-template="dahuaAlert"] .dahuaAlertFoot a:hover{opacity:1;text-decoration:underline}',
+
+          /* La fenêtre de plein écran. position:fixed et non le absolute du
+             coeur : sur un dashboard long, déjà défilé, une boîte absolue se
+             place à 6vh du HAUT DU DOCUMENT, donc hors de l\'écran. Deux
+             déclarations de fond : la seconde est la bonne, la première sert de
+             repli si un thème ne définit pas --panel-bg-color, sans quoi la
+             fenêtre serait transparente. */
+          /* Voile propre à cette tuile.
+
+             Celui du coeur n\'est stylé que par desktop/css/dom.ui.css, que
+             l\'interface mobile ne charge PAS : là-bas c\'est un div de hauteur
+             nulle, qui n\'assombrit rien et surtout ne bloque aucun clic — on
+             continuait de faire défiler et de cliquer le dashboard sous la
+             fenêtre ouverte.
+
+             Et il n\'est pas question de redéfinir #jeeDialogBackdrop ici : la
+             règle serait globale et remonterait le voile au-dessus des boîtes du
+             coeur, qui vivent à 1020 et 1200. On demande donc à modal() de ne
+             poser aucun voile, et on met le sien, sous le 1500 de la fenêtre. */
+          '.dahuaAlertVeil{position:fixed;inset:0;z-index:1400;background:rgb(var(--panel-bg-color));opacity:.8}',
+          'div.jeeDialog.dahuaAlertModal{position:fixed;left:0;right:0;margin:0 auto;max-width:96vw;padding:3px;z-index:1500;background:var(--btnEq-default-color);background:rgb(var(--panel-bg-color))}',
+          'div.jeeDialog.dahuaAlertModal .jeeDialogTitle{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:5px;font-size:13px;line-height:1.4;color:var(--txt-color)}',
+          'div.jeeDialog.dahuaAlertModal .jeeDialogTitle .title{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:600}',
+          /* Bouton de fermeture écrit en toutes lettres, et non la classe
+             btClose du coeur : celle-ci n\'est qu\'une image de fond servie par
+             dom.ui.css, que le mobile ne charge pas — le bouton y serait
+             invisible. */
+          'div.jeeDialog.dahuaAlertModal .dahuaAlertClose{flex:0 0 auto;padding:2px 8px;font-size:12px;line-height:18px;cursor:pointer;color:var(--txt-color);background:var(--btnEq-default-color);border:none;border-radius:var(--border-radius)}',
+          'div.jeeDialog.dahuaAlertModal .jeeDialogContent{margin:5px}',
+          'div.jeeDialog.dahuaAlertModal .dahuaAlertFull{display:block;width:100%;max-height:78vh;object-fit:contain;cursor:zoom-out}',
+          'div.jeeDialog.dahuaAlertModal .dahuaAlertNote{padding:12px 0;font-size:13px;text-align:center;color:var(--al-danger-color)}'
+        ].join('')
+        document.head.appendChild(css)
+      }
+
+      /* JSON.parse lève sur une valeur vide, tronquée ou jamais écrite : une
+         règle qui n\'a pas encore déclenché est le cas NORMAL, pas une erreur, et
+         le dashboard entier ne doit pas s\'interrompre pour autant. La variable
+         rattrapée reprend le nom du paramètre, que tools/check-js.py connaît :
+         cet outil ignore les liaisons de catch, et le corps ne s\'en sert pas. */
+      function dahuaAlertParse(_raw) {
+        try { return JSON.parse(_raw) } catch (_raw) { return null }
+      }
+
+      function dahuaAlertPad(_n) {
+        return (_n < 10) ? ('0' + _n) : ('' + _n)
+      }
+
+      /* L\'heure seule si l\'alerte est du jour, la date devant sinon : sur le
+         dashboard on cherche « quand », et « 21:58 » sans date ferait passer une
+         alerte de la semaine dernière pour celle de ce soir. */
+      function dahuaAlertClock(_stamp) {
+        if (typeof _stamp !== 'number' || !isFinite(_stamp) || _stamp <= 0) { return '' }
+        var when = new Date(_stamp * 1000)
+        var today = new Date()
+        /* Une description corrompue peut porter une date hors du domaine de
+           Date : sans ce contrôle la tuile afficherait « NaN/NaN NaN:NaN:NaN ». */
+        if (isNaN(when.getTime())) { return '' }
+        var hour = dahuaAlertPad(when.getHours()) + ':' + dahuaAlertPad(when.getMinutes()) + ':' + dahuaAlertPad(when.getSeconds())
+        if (when.toDateString() === today.toDateString()) { return hour }
+        return dahuaAlertPad(when.getDate()) + '/' + dahuaAlertPad(when.getMonth() + 1) + ' ' + hour
+      }
+
+      /* Les deux URL du passe-plat authentifié. La vignette est le même nom de
+         fichier avec « _t » avant l\'extension. Un nom qui ne finirait pas par
+         .jpg n\'a pas de vignette connue : on sert alors l\'image elle-même
+         plutôt que de fabriquer une URL qui rendrait 404. */
+      function dahuaAlertUrl(_alert, _file) {
+        return 'plugins/dahua/core/php/snapshot.php?alert=' + encodeURIComponent(_alert) + '&file=' + encodeURIComponent(_file)
+      }
+
+      function dahuaAlertThumb(_file) {
+        if (_file.length > 4 && _file.slice(-4) === '.jpg') { return _file.slice(0, -4) + '_t.jpg' }
+        return _file
+      }
+
+      function dahuaAlertNote(_text, _bad) {
+        var note = document.createElement('div')
+        note.className = _bad ? 'dahuaAlertNote dahuaAlertBad' : 'dahuaAlertNote'
+        /* textContent et jamais innerHTML : ce texte vient d\'une erreur de curl
+           ou d\'un nom de canal saisi dans le NVR, donc de l\'extérieur. */
+        note.textContent = _text
+        return note
+      }
+
+      /* Plein écran. jeeDialog.modal() est la seule modale garantie sur le
+         dashboard : fslightbox n\'est chargé que par la page du Market et
+         bootbox dépend d\'un réglage jQuery que l\'utilisateur peut désactiver.
+         On lui passe un élément construit ici — contentUrl ferait un chargement
+         HTML, pas un affichage d\'image. */
+      function dahuaAlertZoom(_url, _legend) {
+        /* Une seule fenêtre à la fois. Un double-clic en ouvrait deux,
+           superposées et identiques : le premier « Fermer » ne semblait rien
+           faire, et le bouton passait pour cassé. */
+        if (document.querySelector('.dahuaAlertModal') !== null) { return }
+
+        var dialog = document.createElement('div')
+        var veil = document.createElement('div')
+        var head = document.createElement('div')
+        var label = document.createElement('span')
+        var button = document.createElement('button')
+        var body = document.createElement('div')
+        var full = document.createElement('img')
+
+        function quit() {
+          document.removeEventListener('keydown', onKey)
+          veil.remove()
+          /* close() du coeur retire la boîte ET nettoie le voile. Un simple
+             remove() laisserait le voile posé sur tout le dashboard, qui
+             deviendrait inutilisable. */
+          if (dialog._jeeDialog !== undefined) { dialog._jeeDialog.close() } else { dialog.remove() }
+        }
+        function onKey(_event) {
+          if (_event.key === 'Escape') { quit() }
+        }
+
+        dialog.className = 'jeeDialog dahuaAlertModal'
+        /* unseen() et non style.display : setPosition() du coeur fait
+           « _dialog.style = null » et efface tout le style en ligne. La ligne
+           aurait menti sur ce qu\'elle fait, et la fenêtre serait apparue avant
+           son voile au moindre décalage. */
+        dialog.unseen()
+
+        head.className = 'jeeDialogTitle'
+        label.className = 'title'
+        label.textContent = _legend
+        head.appendChild(label)
+        button.className = 'dahuaAlertClose'
+        button.setAttribute('type', 'button')
+        button.textContent = '{{Fermer}}'
+        button.addEventListener('click', quit)
+        head.appendChild(button)
+        dialog.appendChild(head)
+
+        body.className = 'jeeDialogContent'
+        full.className = 'dahuaAlertFull'
+        full.setAttribute('alt', _legend)
+        /* L\'image peut avoir été purgée entre l\'affichage de la tuile et le
+           clic : la rétention haute ne garde les pleines résolutions que
+           quelques jours. Mieux vaut le dire qu\'une icône cassée. */
+        full.addEventListener('error', function () {
+          full.remove()
+          body.appendChild(dahuaAlertNote('{{Image indisponible}}', true))
+        })
+        full.addEventListener('click', quit)
+        full.setAttribute('src', _url)
+        body.appendChild(full)
+        dialog.appendChild(body)
+
+        veil.className = 'dahuaAlertVeil'
+        veil.addEventListener('click', quit)
+        document.body.appendChild(veil)
+
+        document.body.appendChild(dialog)
+        /* backdrop: false — le voile est le nôtre, voir la feuille de style. */
+        jeeDialog.modal(dialog, { width: '90vw', height: 'auto', top: '6vh', backdrop: false })._jeeDialog.show()
+        document.addEventListener('keydown', onKey)
+      }
+
+      /* Une vignette et sa légende. La légende est le coeur du dispositif :
+         « à la détection » montre l\'arrivée, « à l\'instant de l\'alerte »
+         montre où la personne est allée. Sans elle, deux images se ressemblent. */
+      function dahuaAlertShot(_alert, _image, _camera, _hd) {
+        var shot = document.createElement('figure')
+        var thumb = document.createElement('img')
+        var caption = document.createElement('figcaption')
+        var live = (_image.k === 'live')
+        var legend = live ? '{{À l\'instant de l\'alerte}}' : '{{À la détection}}'
+        var hint = live
+          ? '{{Capture demandée à cette caméra au moment du déclenchement}}'
+          : '{{Vue enregistrée par la caméra qui a détecté}}'
+
+        shot.className = 'dahuaAlertShot'
+        shot.setAttribute('data-zoom', _hd ? '1' : '0')
+
+        /* Seule la vignette est chargée : 25 Ko contre 600 Ko à 1 Mo pour la
+           pleine résolution. Quatre pleines résolutions par tuile rendraient le
+           dashboard inutilisable. La pleine résolution n\'arrive qu\'au clic.
+
+           « loading » est posé AVANT « src », et l\'ordre n\'est pas indifférent :
+           l\'attribut est inerte si le chargement a déjà commencé. Posé après, il
+           ne différait rien du tout et toutes les vignettes de toutes les règles
+           partaient ensemble. */
+        thumb.setAttribute('loading', 'lazy')
+        thumb.setAttribute('alt', _camera + ' — ' + legend)
+        thumb.addEventListener('error', function () {
+          /*
+           * Une vignette manquante ne veut pas dire qu\'il n\'y a pas d\'image.
+           * makeThumb() rend false quand GD est absent ou le JPEG du NVR
+           * tronqué, et la purge refuse alors d\'effacer la pleine résolution
+           * précisément pour qu\'on puisse s\'y rabattre. Sans ce repli, une
+           * image parfaitement lisible devenait invisible ET inatteignable,
+           * puisque l\'élément était retiré — sur une installation sans GD,
+           * c\'était toutes les images de toutes les alertes.
+           */
+          if (thumb.getAttribute('data-fallback') !== '1' && _hd) {
+            thumb.setAttribute('data-fallback', '1')
+            thumb.setAttribute('src', dahuaAlertUrl(_alert, _image.f))
+            return
+          }
+          thumb.remove()
+          shot.insertBefore(dahuaAlertNote('{{Vignette indisponible}}', false), shot.firstChild)
+        })
+        thumb.setAttribute('src', dahuaAlertUrl(_alert, dahuaAlertThumb(_image.f)))
+        if (_hd) {
+          thumb.setAttribute('title', hint + ' — {{cliquer pour agrandir}}')
+          thumb.addEventListener('click', function () {
+            dahuaAlertZoom(dahuaAlertUrl(_alert, _image.f), _camera + ' — ' + legend)
+          })
+        } else {
+          /* Pleines résolutions purgées : pas d\'agrandissement qui ne donnerait
+             rien. Les vignettes, elles, restent — elles suffisent souvent. */
+          thumb.setAttribute('title', hint + ' — {{image pleine résolution effacée}}')
+        }
+        shot.appendChild(thumb)
+
+        caption.className = 'dahuaAlertCaption'
+        caption.textContent = legend
+        shot.appendChild(caption)
+        return shot
+      }
+
+      /* Le bloc d\'une caméra. Il est construit même sans la moindre image :
+         savoir qu\'une caméra n\'a rien renvoyé est une information de levé de
+         doute au moins aussi précieuse qu\'une image. */
+      function dahuaAlertCam(_alert, _camera, _rank, _hd, _stale) {
+        var block = document.createElement('div')
+        var name = document.createElement('div')
+        var shots = document.createElement('div')
+        var images = Array.isArray(_camera.i) ? _camera.i : []
+        var label = (typeof _camera.n === 'string' && _camera.n !== '') ? _camera.n : ('{{Caméra}} ' + _rank)
+        var shown = 0
+        var i = 0
+
+        block.className = 'dahuaAlertCam'
+        name.className = 'dahuaAlertCamName'
+        name.textContent = label
+        name.setAttribute('title', label)
+        block.appendChild(name)
+
+        shots.className = 'dahuaAlertShots'
+        for (i = 0; i < images.length; i++) {
+          if (images[i] === null || typeof images[i] !== 'object') { continue }
+          if (typeof images[i].f !== 'string' || images[i].f === '' || _alert === '') { continue }
+          shots.appendChild(dahuaAlertShot(_alert, images[i], label, _hd))
+          shown++
+        }
+        if (shown > 0) { block.appendChild(shots) }
+
+        /* La cause d\'échec accompagne les images au lieu de les remplacer : une
+           caméra peut très bien avoir donné sa vue de détection et avoir échoué
+           sur la capture fraîche, et les deux faits comptent. */
+        if (typeof _camera.e === 'string' && _camera.e !== '') {
+          block.appendChild(dahuaAlertNote(_camera.e, true))
+        } else if (Number(_camera.w) === 1) {
+          /* Le « w » de chaque caméra, et non le « p » global : il faut dire
+             LAQUELLE manque. Et passé une minute, la capture ne viendra plus —
+             une tuile qui annonce une capture en route pour l\'éternité ment. */
+          block.appendChild(_stale
+            ? dahuaAlertNote('{{Pas de réponse}}', true)
+            : dahuaAlertNote('{{Capture en cours}}', false))
+        } else if (shown === 0) {
+          block.appendChild(dahuaAlertNote('{{Aucune image}}', false))
+        }
+        return block
+      }
+
+      /*
+       * Le rendu est une fonction nommée, et non le corps direct du rappel,
+       * parce qu\'il doit pouvoir se rejouer tout seul.
+       *
+       * La bascule « capture en cours » → « pas de réponse » se calcule à
+       * l\'instant du rendu, or ce rendu n\'a lieu qu\'à l\'arrivée d\'une valeur.
+       * Si le compte rendu d\'une capture ne revient jamais — démon tué pendant
+       * la prise, ordre perdu — plus aucune valeur n\'arrive, et un dashboard
+       * resté ouvert annonce une capture en route pour l\'éternité. C\'est
+       * précisément le mensonge que cette bascule existe pour éviter.
+       */
+      function dahuaAlertRender(_options) {
+        var cmd = document.querySelector('.cmd[data-cmd_uid="#uid#"]')
+        if (!is_object(cmd)) { return }
+
+        /* Un seul minuteur par tuile : sans cette remise à zéro, chaque valeur
+           reçue en empilerait un de plus. */
+        if (cmd._dahuaAlertTimer) {
+          clearTimeout(cmd._dahuaAlertTimer)
+          cmd._dahuaAlertTimer = null
+        }
+
+        var data = dahuaAlertParse(_options.value)
+        var head = cmd.querySelector('.dahuaAlertHead')
+        var time = cmd.querySelector('.dahuaAlertTime')
+        var detail = cmd.querySelector('.dahuaAlertDetail')
+        var grid = cmd.querySelector('.dahuaAlertGrid')
+        var wait = cmd.querySelector('.dahuaAlertWait')
+        var alertId = ''
+        var text = ''
+        var cameras = null
+        var stamp = 0
+        var now = 0
+        var stale = false
+        var hd = false
+        var pending = false
+        var i = 0
+
+        grid.textContent = ''
+
+        /* Valeur vide, illisible, ou objet qui ne porte ni alerte ni libellé ni
+           caméra : on le dit sobrement. Surtout pas de grille vide. */
+        if (data === null || typeof data !== 'object') {
+          data = null
+        }
+        alertId = (data !== null && typeof data.a === 'string') ? data.a : ''
+        text = (data !== null && typeof data.d === 'string') ? data.d : ''
+        cameras = (data !== null && Array.isArray(data.c)) ? data.c : []
+        if (alertId === '' && text === '' && cameras.length === 0) {
+          cmd.setAttribute('data-state', 'wait')
+          wait.textContent = '{{Aucune alerte enregistrée}}'
+          jeedom.cmd.displayDuration(_options.valueDate, cmd.querySelector('.timeCmd'), '#time#')
+          return
+        }
+
+        cmd.setAttribute('data-state', 'ready')
+        wait.textContent = ''
+
+        /* L\'heure du déclenchement sert de repère quand elle est postérieure à
+           l\'horloge du navigateur : sur un poste mal réglé, la différence
+           donnerait un âge négatif, donc une capture déclarée sans réponse à
+           l\'instant même où elle est demandée. */
+        stamp = (data !== null && typeof data.t === 'number') ? data.t : 0
+        now = Math.floor(Date.now() / 1000)
+        if (stamp > now) { now = stamp }
+        /* 60 secondes : c\'est dahuaAlert::SHOT_EXPIRY, recopiée ici faute de
+           pouvoir lire une constante PHP depuis un gabarit. desktop/php/alerts.php
+           fait le même calcul côté serveur, lui en lisant la constante. Les trois
+           doivent rester d\'accord : changer la constante sans toucher à cette
+           ligne ferait diverger la tuile de la page d\'historique, sans erreur. */
+        stale = (stamp > 0) && ((now - stamp) > 60)
+
+        /* hd absent vaut « oui » : seules les alertes purgées portent 0, et
+           interdire l\'agrandissement sur un doute priverait de la seule chose
+           que la tuile ne sait pas montrer elle-même. */
+        hd = (data === null) || (Number(data.hd) !== 0)
+
+        time.textContent = dahuaAlertClock(stamp)
+        detail.textContent = text
+        /* Le libellé entier dans l\'infobulle, car il est long et la tuile
+           l\'enroule : title vide serait une bulle vide au survol. */
+        if (text !== '') { head.setAttribute('title', text) } else { head.removeAttribute('title') }
+
+        for (i = 0; i < cameras.length; i++) {
+          if (cameras[i] === null || typeof cameras[i] !== 'object') { continue }
+          if (Number(cameras[i].w) === 1 && typeof cameras[i].e !== 'string') { pending = true }
+          grid.appendChild(dahuaAlertCam(alertId, cameras[i], i + 1, hd, stale))
+        }
+
+        jeedom.cmd.displayDuration(_options.valueDate, cmd.querySelector('.timeCmd'), '#time#')
+
+        /* Une attente encore jeune : on se redonne rendez-vous juste après
+           l\'échéance pour dire la vérité, même si plus rien n\'arrive. Une
+           seconde de marge évite de retomber pile sur la limite. */
+        if (pending && !stale && stamp > 0) {
+          cmd._dahuaAlertTimer = setTimeout(function () {
+            dahuaAlertRender(_options)
+          }, ((stamp + 61) - now) * 1000)
+        }
+      }
+
+      jeedom.cmd.addUpdateFunction('#id#', dahuaAlertRender)
+
+      /* display_value reste vide : le coeur n\'échappe que les apostrophes dans
+         cette valeur, ce qui ne protège pas d\'une balise de fermeture de bloc.
+         La tuile lit #value#, déjà assaini côté PHP par json_encode et ses
+         drapeaux hexadécimaux. */
+      jeedom.cmd.refreshValue([{ cmd_id: '#id#', value: '#value#', display_value: '', valueDate: '#valueDate#', collectDate: '#collectDate#', alertLevel: '#alertLevel#', unit: '#unite#' }])
+    })()
+  </script>
+</div>

@@ -17,6 +17,8 @@ Sortie : code 1 s'il reste des identifiants hors portée.
 """
 
 import re
+import glob
+import os
 import sys
 
 # Globales du navigateur, mots-clés, et helpers fournis par le coeur de Jeedom.
@@ -172,5 +174,14 @@ def analyser(chemin):
 
 
 if __name__ == '__main__':
-    fichiers = sys.argv[1:] or ['desktop/js/dahua.js']
+    # Sans argument, TOUS les fichiers JS du plugin, découverts à l'exécution.
+    # Une liste écrite en dur avait laissé desktop/js/alerts.js hors contrôle le
+    # jour de sa création : l'outil répondait « aucun identifiant hors portée »
+    # sans avoir regardé le fichier neuf, ce qui est pire que pas d'outil du
+    # tout. Le tri rend la sortie stable d'une exécution à l'autre.
+    racine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    fichiers = sys.argv[1:] or sorted(glob.glob(os.path.join(racine, 'desktop', 'js', '*.js')))
+    if not fichiers:
+        print('aucun fichier JS trouvé')
+        sys.exit(1)
     sys.exit(0 if all([analyser(f) for f in fichiers]) else 1)
