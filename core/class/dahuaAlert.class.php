@@ -986,6 +986,7 @@ class dahuaAlert {
          * promet le commentaire ci-dessus.
          */
         $best = '';
+        $bestFile = '';
         foreach (array(self::KIND_LIVE, self::KIND_DET) as $kind) {
             if ($best != '') {
                 break;
@@ -993,6 +994,7 @@ class dahuaAlert {
             foreach (isset($meta['cameras']) && is_array($meta['cameras']) ? $meta['cameras'] : array() as $camera) {
                 if (isset($camera[$kind]) && $camera[$kind] != '') {
                     $best = self::url($_id, $camera[$kind]);
+                    $bestFile = self::filePath($_id, $camera[$kind]);
                     break;
                 }
             }
@@ -1004,7 +1006,29 @@ class dahuaAlert {
          * sournois puisqu'il ne surviendrait plus qu'une fois sur dix.
          */
         $_rule->checkAndUpdateCmd('image', $best);
+        /* Même règle : écrite même vide, pour ne jamais joindre à une
+         * notification le fichier du déclenchement précédent. */
+        $_rule->checkAndUpdateCmd('image_file', $bestFile);
         return true;
+    }
+
+    /*
+     * Chemin sur le disque d'une image d'alerte, pour la joindre à une
+     * notification. La pleine résolution si elle est encore là, sa vignette
+     * sinon : une republication tardive — la mise à jour du plugin, la purge
+     * qui prévient la tuile — ne doit pas donner un chemin vers un fichier
+     * effacé. '' si ni l'une ni l'autre n'existe.
+     */
+    public static function filePath($_id, $_file) {
+        $dir = self::path($_id);
+        if ($dir === false || !self::isValidFile($_file)) {
+            return '';
+        }
+        if (is_file($dir . '/' . $_file)) {
+            return $dir . '/' . $_file;
+        }
+        $thumb = substr($_file, 0, -4) . '_t.jpg';
+        return is_file($dir . '/' . $thumb) ? $dir . '/' . $thumb : '';
     }
 
     /* URL servie par le passe-plat authentifié. Le dossier data/ est interdit

@@ -283,10 +283,9 @@ laisse rien traîner.
 
 Comme pour les captures courantes, l'adresse servie par le plugin demande une
 session Jeedom : un service externe ne pourra pas la charger. Joignez le fichier
-plutôt que le lien. Les images d'une alerte sont sous
-`plugins/dahua/data/alerts/<identifiant de l'alerte>/` à la racine de votre
-Jeedom, et la commande *Image du déclenchement* donne l'identifiant dans son
-adresse.
+plutôt que le lien : la commande *Fichier de l'image* de chaque règle donne
+directement son chemin sur le disque, à placer dans le champ de pièce jointe de
+votre plugin de notification.
 
 ## PTZ
 
@@ -457,6 +456,7 @@ les cas : si vous préférez un scénario, déclenchez-le simplement dessus.
 | Déclenchée | info / binaire | 1 pendant la durée de maintien. Historisée, type générique `ALARM_STATE`. |
 | Détail du déclenchement | info / texte | « NORD Ligne franchie 12:00:03 + NORD Mouvement 12:00:05 » |
 | Image du déclenchement | info / texte | Adresse de la meilleure image de la dernière alerte — la capture fraîche si elle est arrivée, sinon celle de la détection. Vidée quand l'alerte n'a aucune image, plutôt que de laisser celle du déclenchement précédent. |
+| Fichier de l'image | info / texte | La même image, en chemin sur le disque de Jeedom : c'est elle qu'on joint à une notification. Vidée dans les mêmes cas. Masquée par défaut. |
 | Images de l'alerte | info / texte | Toutes les images de la dernière alerte, avec le nom de chaque caméra. C'est la commande qui porte la tuile du dashboard. |
 | Tester | action | Joue le déclenchement pour de vrai, actions comprises. Masquée par défaut : elle exécute toutes les actions de la règle, y compris sur des équipements auxquels l'utilisateur du dashboard n'a pas forcément droit. |
 | Réinitialiser | action | Remet la règle au repos, joue les actions de retour et oublie les détections en attente |
@@ -464,9 +464,12 @@ les cas : si vous préférez un scénario, déclenchez-le simplement dessus.
 Les deux boutons **Tester la règle** et **Réinitialiser** sont également en bas de
 la page de la règle, avec l'état courant et le dernier déclenchement.
 
-Pour envoyer une photo dans une notification, utilisez *Image du déclenchement* :
-l'adresse demande une session Jeedom, il faut donc joindre le fichier plutôt que
-le lien si le destinataire est externe.
+Pour envoyer une photo dans une notification, utilisez *Fichier de l'image* :
+l'adresse de *Image du déclenchement* demande une session Jeedom, qu'un service
+externe n'a pas. Au passage de *Déclenchée* à 1, la commande désigne l'image du
+moment de la détection ; la capture fraîche la remplace quelques secondes plus
+tard. Pour joindre celle-ci, faites attendre le scénario une dizaine de secondes
+avant de lire la commande.
 
 ### Bon à savoir
 

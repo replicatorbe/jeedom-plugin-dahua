@@ -616,7 +616,7 @@ class dahua extends eqLogic {
         foreach (self::$_channelEvents as $def) {
             $camIds[] = $def['logicalId'];
         }
-        $ruleIds = array('triggered', 'detail', 'image', 'images', 'rule_test', 'rule_reset');
+        $ruleIds = array('triggered', 'detail', 'image', 'image_file', 'images', 'rule_test', 'rule_reset');
 
         $byType = array(
             self::TYPE_NVR    => $nvrIds,
@@ -861,6 +861,17 @@ class dahua extends eqLogic {
             'isVisible'    => 0,
             'generic_type' => 'CAMERA_URL',
             'order'        => $order++,
+        ));
+        /*
+         * La même image, en chemin sur le disque. C'est elle qu'on joint à une
+         * notification : l'adresse ci-dessus exige une session Jeedom, qu'un
+         * service externe — Telegram, Pushover, un serveur de mail — n'a pas.
+         * Sans elle, il fallait extraire l'identifiant de l'alerte de l'URL
+         * pour reconstituer le chemin à la main dans le scénario.
+         */
+        $this->addCmdIfMissing('image_file', 'Fichier de l\'image', 'info', 'string', array(
+            'isVisible' => 0,
+            'order'     => $order++,
         ));
         /*
          * Le levé de doute. Un seul objet JSON porte toutes les images de

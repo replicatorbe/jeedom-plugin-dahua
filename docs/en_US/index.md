@@ -277,9 +277,8 @@ nothing lying around.
 
 As with the ordinary snapshots, the address served by the plugin requires a
 Jeedom session: an external service will not be able to load it. Attach the
-file rather than the link. The images of an alert are under
-`plugins/dahua/data/alerts/<alert id>/` under your Jeedom root, and the
-*Trigger image* command gives the id in its address.
+file rather than the link: the *Image file* command of each rule gives its path
+on disk directly, to put in the attachment field of your notification plugin.
 
 ## PTZ
 
@@ -442,6 +441,7 @@ you prefer a scenario, simply trigger it on that command.
 | Triggered | info / binary | 1 for the hold time. Historized, generic type `ALARM_STATE`. |
 | Trigger detail | info / string | "NORTH Line crossed 12:00:03 + NORTH Motion 12:00:05" |
 | Trigger image | info / string | Address of the best image of the last alert — the fresh snapshot if it arrived, otherwise the one at detection. Emptied when the alert has no image, rather than leaving the one from the previous trigger. |
+| Image file | info / string | The same image, as a path on the Jeedom disk: this is the one to attach to a notification. Emptied in the same cases. Hidden by default. |
 | Alert images | info / string | All the images of the last alert, with the name of each camera. This is the command that carries the dashboard tile. |
 | Test | action | Plays the trigger for real, actions included. Hidden by default: it runs every action of the rule, including on equipment the dashboard user may have no rights on. |
 | Reset | action | Returns the rule to idle, plays the release actions and forgets pending detections |
@@ -449,9 +449,11 @@ you prefer a scenario, simply trigger it on that command.
 Both **Test the rule** and **Reset** buttons are also at the bottom of the rule
 page, next to the current state and the last trigger.
 
-To send a photo in a notification, use *Trigger image*: the address requires a
-Jeedom session, so attach the file rather than the link if the recipient is
-external.
+To send a photo in a notification, use *Image file*: the address of *Trigger
+image* requires a Jeedom session, which an external service does not have. When
+*Triggered* goes to 1, the command points at the image from detection time; the
+fresh snapshot replaces it a few seconds later. To attach that one, make the
+scenario wait about ten seconds before reading the command.
 
 ### Good to know
 

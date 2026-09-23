@@ -32,6 +32,7 @@ function dahua_update() {
     dahua_migrateCameraOnline();
     dahua_migrateRuleImages();
     dahua_migrateAlertWidget();
+    dahua_migrateRuleImageFile();
     dahua_republishAlerts();
 }
 
@@ -199,6 +200,36 @@ function dahua_migrateRuleImages() {
  * faut le faire, et une seule fois : la visibilité est ensuite la décision de
  * l'utilisateur, pas la nôtre.
  */
+/*
+ * Crée « Fichier de l'image » sur les règles existantes. Même mécanique et
+ * même raison que dahua_migrateRuleImages() : addCmdIfMissing() n'est appelé
+ * qu'à l'enregistrement, et une règle que personne ne rouvre n'aurait jamais la
+ * commande. Placée avant la republication, qui la remplit aussitôt.
+ */
+function dahua_migrateRuleImageFile() {
+    if (config::byKey('migration::rule_image_file', 'dahua', 0) == 1) {
+        return;
+    }
+    $complete = true;
+    foreach (eqLogic::byType('dahua') as $eqLogic) {
+        if ($eqLogic->getConfiguration('type') != dahua::TYPE_RULE) {
+            continue;
+        }
+        if (is_object($eqLogic->getCmd('info', 'image_file'))) {
+            continue;
+        }
+        try {
+            $eqLogic->postSave();
+        } catch (Throwable $e) {
+            $complete = false;
+            log::add('dahua', 'error', 'migration ' . $eqLogic->getName() . ' : ' . $e->getMessage());
+        }
+    }
+    if ($complete) {
+        config::save('migration::rule_image_file', 1, 'dahua');
+    }
+}
+
 /*
  * Republie la dernière alerte de chaque règle, à chaque mise à jour.
  *
