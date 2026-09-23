@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.1 — 2026-09-23
+
+**Enlarging alert images**
+
+- A thumbnail could show on the tile while clicking it answered "Image
+  unavailable". The purge removed full resolution images beyond the thirtieth
+  rank, all rules taken together, without telling the tile. A chatty rule could
+  thus push the latest alert of the others beyond that rank within hours.
+- The latest alert of each rule, the one its tile shows, now always keeps its
+  full resolution.
+- New setting **Full resolution guaranteed for (days)**, 3 by default: any more
+  recent alert keeps its enlargement, whatever its rank. The total number of
+  alerts kept still bounds the space used.
+- If the full resolution is missing anyway, the window enlarges the thumbnail
+  and says so, instead of showing nothing.
+- The update fixes the tiles already affected. Full resolution images already
+  deleted do not come back: those tiles only show thumbnails until their rule
+  triggers again.
+
 ## 0.6 — 2026-09-16
 
 **Alert folders — the visual verification**

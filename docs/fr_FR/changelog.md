@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.1 — 23/09/2026
+
+**Agrandissement des images d'alerte**
+
+- Une vignette pouvait s'afficher sur la tuile alors que le clic répondait
+  « Image indisponible ». La purge retirait les images pleine résolution au-delà
+  du trentième rang, toutes règles confondues, sans en prévenir la tuile. Une
+  règle bavarde repoussait ainsi en quelques heures la dernière alerte des
+  autres au-delà de ce rang.
+- La dernière alerte de chaque règle, celle que montre sa tuile, garde
+  désormais toujours sa pleine résolution.
+- Nouveau réglage **Pleine résolution garantie pendant (jours)**, 3 par défaut :
+  toute alerte plus récente garde son image en grand, quel que soit son rang.
+  Le nombre total d'alertes conservées borne toujours la place occupée.
+- Si la pleine résolution manque malgré tout, la fenêtre agrandit la vignette
+  en le signalant, au lieu de ne rien montrer.
+- La mise à jour corrige les tuiles déjà concernées. Les images en grand déjà
+  effacées ne reviennent pas : ces tuiles n'affichent plus que les vignettes,
+  jusqu'au prochain déclenchement de leur règle.
+
 ## 0.6 — 16/09/2026
 
 **Dossiers d'alerte — le levé de doute**
