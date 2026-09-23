@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.7 — 2026-09-23
+
+**Attaching an alert image to a notification**
+
+- New **Image file** command on each rule: the path on disk of the best image of
+  the last alert. This is the one to attach to a notification — the address of
+  *Trigger image* requires a Jeedom session, which Telegram, Pushover or a mail
+  server do not have. Until now the path had to be rebuilt by hand in the
+  scenario.
+- It points at the full resolution, or at its thumbnail if the purge removed
+  it, and it is emptied when the alert has no image, so the previous trigger's
+  image is never attached. Existing rules receive it on update, already filled.
+
+**Seeing whether a rule can trigger**
+
+- Each condition of a rule now shows the **last time** a received detection
+  would have met it. "Never seen" flags a condition the camera cannot meet —
+  typically a line crossing asked of a camera with no IVS rule in the NVR. Such
+  a rule never triggers and raises no error: it looked as if the plugin missed
+  detections.
+- The indicator follows what is typed, even before saving. It tells whether a
+  condition can be met, not whether the conditions happened together within
+  the rule's window.
+
 ## 0.6.1 — 2026-09-23
 
 **Enlarging alert images**

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7 — 23/09/2026
+
+**Joindre l'image d'une alerte à une notification**
+
+- Nouvelle commande **Fichier de l'image** sur chaque règle : le chemin sur le
+  disque de la meilleure image de la dernière alerte. C'est elle qu'on joint à
+  une notification — l'adresse de *Image du déclenchement* exige une session
+  Jeedom, que Telegram, Pushover ou un serveur de mail n'ont pas. Jusqu'ici il
+  fallait reconstituer ce chemin à la main dans le scénario.
+- Elle pointe la pleine résolution, ou sa vignette si la purge l'a retirée, et
+  elle est vidée quand l'alerte n'a aucune image, pour ne jamais joindre celle
+  du déclenchement précédent. Les règles existantes la reçoivent à la mise à
+  jour, déjà remplie.
+
+**Voir si une règle peut se déclencher**
+
+- Chaque condition d'une règle affiche désormais la **dernière fois** qu'une
+  détection reçue l'aurait remplie. « Jamais vu » signale une condition que la
+  caméra ne peut pas remplir — typiquement un franchissement de ligne demandé à
+  une caméra sans règle IVS dans le NVR. Une telle règle ne se déclenche jamais
+  et ne produit aucune erreur : on croyait que le plugin ratait des détections.
+- L'indicateur suit la saisie, avant même l'enregistrement. Il dit si une
+  condition peut être remplie, pas si les conditions se sont produites ensemble
+  dans la fenêtre de la règle.
+
 ## 0.6.1 — 23/09/2026
 
 **Agrandissement des images d'alerte**
