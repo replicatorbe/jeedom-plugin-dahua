@@ -352,6 +352,10 @@ Each row of the table describes one detection to wait for:
 - **Detection** — Motion, Line crossed, Human detected… or *Any detection*.
 - **Times** — required number of occurrences. Leave 1 in the common case; set 3
   for "three passes in front of the same camera".
+- **Last time** — when a received detection last met this condition; **Never
+  seen** flags a detection the camera does not emit (for instance a line
+  crossing with no IVS rule configured in the NVR): the rule cannot trigger
+  until this is fixed on the NVR side.
 
 A row whose camera or detection is still on "pick one" is **ignored**. This is
 deliberate: a rule saved without being filled in must not fire on the first

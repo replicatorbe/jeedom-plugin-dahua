@@ -121,6 +121,16 @@ try {
         ajax::success(true);
     }
 
+    /*
+     * Dernière détection reçue de chaque caméra, par type. Sans paramètre : le
+     * relevé ne dépend pas de la règle ouverte, et la page s'en sert aussi pour
+     * les conditions pas encore enregistrées. Lecture seule, d'où l'absence
+     * de unautorizedInDemo().
+     */
+    if (init('action') == 'lastSeen') {
+        ajax::success(dahuaRule::lastSeen());
+    }
+
     if (init('action') == 'daemonStatus') {
         $info = dahua::deamon_info();
         if ($info['state'] != 'ok') {

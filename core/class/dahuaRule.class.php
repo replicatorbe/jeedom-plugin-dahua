@@ -224,6 +224,95 @@ class dahuaRule {
         return true;
     }
 
+    /* ============================================================ DIAGNOSTIC */
+
+    /*
+     * Date de la dernière détection reçue, par caméra et par type de détection.
+     *
+     * Sert à la page d'une règle : une condition qu'aucune caméra ne satisfait
+     * jamais — un franchissement de ligne demandé à une caméra sans règle IVS —
+     * rend la règle muette pour toujours, et rien d'autre ne le montre.
+     * L'utilisateur croit alors que le plugin rate des détections.
+     *
+     * Le relevé est global et non propre à une règle : la page recalcule chaque
+     * ligne à partir de lui, y compris une condition qu'on vient d'ajouter ou de
+     * modifier sans l'avoir enregistrée. Une seule requête suffit donc, quel que
+     * soit le nombre de conditions, et la correspondance faite côté page est
+     * celle de conditionMatches() : caméra précise ou « any », détection précise
+     * ou « any », rien d'autre.
+     *
+     * La source est l'état des commandes binaires de la caméra, déjà écrit par
+     * jeeDahua.php pour chaque détection. Le moteur, lui, ne garde que les
+     * détections de la fenêtre en cours, et l'historique ne couvre que cinq
+     * types sur quinze. Mais la date à lire dépend de la valeur courante :
+     *   - à 1, la détection est en cours. collectDate est la plus récente :
+     *     un second « Start » ou « Pulse » à 1 ne change pas valueDate, le coeur
+     *     le traite en répétition, alors que le moteur, lui, le compte ;
+     *   - à 0, valueDate est le passage 1 → 0, c'est-à-dire la FIN de la
+     *     dernière détection (Stop du NVR, ou fin d'impulsion fabriquée par le
+     *     démon). collectDate serait trompeuse ici : un Stop répété à 0 la fait
+     *     avancer sans qu'aucune détection n'ait eu lieu.
+     * La date affichée peut donc dépasser le début réel de la détection de sa
+     * durée : quelques secondes d'ordinaire, sans conséquence pour distinguer
+     * « il y a 3 h » de « jamais ».
+     *
+     * Le cache est lu directement, et non par execCmd() : sur une commande qui
+     * n'a jamais reçu de valeur, execCmd() fabrique une collectDate à l'heure
+     * courante, et « jamais vu » deviendrait « à l'instant ».
+     */
+    public static function lastSeen() {
+        $cameras = array();
+        foreach (dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE_CAMERA)) as $camera) {
+            /* Une requête par caméra, et non une par commande : getCmd() avec un
+             * logicalId interroge la base à chaque appel. */
+            $commands = array();
+            foreach ($camera->getCmd('info') as $cmd) {
+                $commands[$cmd->getLogicalId()] = $cmd;
+            }
+            $events = array();
+            foreach (dahua::$_channelEvents as $definition) {
+                $logicalId = $definition['logicalId'];
+                if (!isset($commands[$logicalId])) {
+                    continue;
+                }
+                $cmd   = $commands[$logicalId];
+                $state = $cmd->getCache(array('value', 'valueDate', 'collectDate'));
+                $value = isset($state['value']) ? (string) $state['value'] : '';
+                if ($value === '') {
+                    continue;                         // jamais reçue
+                }
+                /* L'option « inverser » de la configuration d'une commande
+                 * binaire inverse la valeur STOCKÉE (cmd::formatValue), et non
+                 * son seul affichage comme invertBinary côté display. */
+                $active = ((int) $value >= 1) xor (bool) $cmd->getConfiguration('invertBinary', false);
+                $date   = $active ? $state['collectDate'] : $state['valueDate'];
+                $time   = ($date != '') ? strtotime($date) : false;
+                if ($time === false || $time <= 0) {
+                    continue;
+                }
+                $events[$logicalId] = array(
+                    'time'   => $time,
+                    'date'   => date('Y-m-d H:i:s', $time),
+                    'active' => $active,
+                );
+            }
+            /*
+             * Une caméra désactivée est signalée à part : le coeur n'écrit plus
+             * ses commandes, alors que le moteur continue de recevoir ses
+             * détections. Son « jamais vu » serait un mensonge.
+             */
+            $cameras[$camera->getId()] = array(
+                'enabled' => ($camera->getIsEnable() == 1),
+                // Objet et non tableau : vide, json_encode en ferait [] et la
+                // page ne pourrait plus l'interroger par clé.
+                'events'  => (object) $events,
+            );
+        }
+        /* L'heure du serveur accompagne le relevé : l'âge affiché ne doit pas
+         * dépendre de l'horloge du navigateur. */
+        return array('now' => time(), 'cameras' => (object) $cameras);
+    }
+
     /* ============================================================ ÉVALUATION */
 
     private static function evaluate($_rule, &$_state, $_timestamp, $_conditions) {

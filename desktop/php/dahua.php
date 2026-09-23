@@ -367,10 +367,11 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 									<table id="table_dahuaConditions" class="table table-bordered table-condensed">
 										<thead>
 											<tr>
-												<th style="width:40%;">{{Sur quelle caméra}}</th>
-												<th style="width:40%;">{{Quelle détection}}</th>
-												<th style="width:12%;">{{Fois}}</th>
-												<th style="width:8%;"></th>
+												<th style="width:32%;">{{Sur quelle caméra}}</th>
+												<th style="width:32%;">{{Quelle détection}}</th>
+												<th style="width:10%;">{{Fois}}</th>
+												<th style="width:20%;" title="{{Date de la dernière détection reçue qui aurait rempli cette condition. « Jamais vu » : aucune caméra concernée n'a encore émis cette détection, la règle ne peut donc pas se déclencher.}}">{{Dernière fois}}</th>
+												<th style="width:6%;"></th>
 											</tr>
 										</thead>
 										<tbody></tbody>
@@ -378,6 +379,7 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 								</div>
 								<a class="btn btn-default btn-sm" id="bt_dahuaAddCondition"><i class="fas fa-plus-circle"></i> {{Ajouter une condition}}</a>
 								<span class="help-block" style="margin:5px 0 0 0;">{{« Fois » exige plusieurs occurrences de la même détection : trois passages devant la même caméra, par exemple.}}</span>
+								<span class="help-block" style="margin:5px 0 0 0;">{{« Dernière fois » dit quand une détection reçue aurait rempli chaque condition. « Jamais vu » signale une condition que la caméra ne peut pas remplir : la règle ne se déclenchera pas tant que le NVR n'émet pas cette détection.}}</span>
 								<div id="span_dahuaRuleSummary" class="help-block" style="margin:8px 0 0 0;"></div>
 							</div>
 						</div>

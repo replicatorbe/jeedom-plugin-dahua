@@ -115,6 +115,15 @@ function dahuaAddCondition(_condition) {
   cell.appendChild(min)
   row.appendChild(cell)
 
+  /* Dernière détection qui aurait rempli la condition. Remplie par
+     dahuaRenderLastSeen(), après setJeeValues : c'est la valeur des listes
+     qu'elle lit, pas la configuration enregistrée. */
+  cell = document.createElement('td')
+  var lastSeen = document.createElement('span')
+  lastSeen.className = 'dahuaLastSeen'
+  cell.appendChild(lastSeen)
+  row.appendChild(cell)
+
   cell = document.createElement('td')
   cell.style.textAlign = 'center'
   var remove = document.createElement('a')
@@ -126,6 +135,157 @@ function dahuaAddCondition(_condition) {
 
   table.querySelector('tbody').appendChild(row)
   row.setJeeValues(condition, '.ruleAttr')
+  dahuaRenderLastSeen(row)
+}
+
+/* Relevé des dernières détections, tel que rendu par l'action « lastSeen » :
+   { now, cameras: { <id>: { enabled, events: { <logicalId>: { time, date, active } } } } },
+   complété de l'heure de réception. null tant qu'il n'est pas arrivé.
+   Global au script et non propre à la règle ouverte : il ne dépend que des
+   caméras, et sert aussi aux conditions pas encore enregistrées. */
+var dahuaLastSeen = null
+
+/* Recharge le relevé. Appelé à chaque ouverture d'une règle, pour que les dates
+   soient celles du moment et non celles de la première règle ouverte. */
+function dahuaLoadLastSeen() {
+  dahuaLastSeen = null
+  dahuaRenderAllLastSeen()
+  dahuaAjax('lastSeen', {}, function (result) {
+    if (!isset(result) || !is_object(result) || !isset(result.cameras)) {
+      return
+    }
+    result.received = Date.now()
+    dahuaLastSeen = result
+    dahuaRenderAllLastSeen()
+  }, { silent: true })
+}
+
+function dahuaRenderAllLastSeen() {
+  document.querySelectorAll('#table_dahuaConditions tbody tr.dahuaRuleCondition').forEach(function (row) {
+    dahuaRenderLastSeen(row)
+  })
+}
+
+/* Nom d'une caméra pour l'infobulle : une condition « n'importe quelle caméra »
+   doit dire laquelle a été vue en dernier. */
+function dahuaCameraName(_id) {
+  var cameras = isset(window.dahuaCameras) ? window.dahuaCameras : []
+  for (var i = 0; i < cameras.length; i++) {
+    if (String(cameras[i].id) === String(_id)) {
+      return cameras[i].name
+    }
+  }
+  return String(_id)
+}
+
+/* Âge lisible. Calculé sur l'heure du serveur, décalée du temps écoulé depuis
+   la réception : une horloge de navigateur fausse ne doit pas afficher
+   « dans 2 h » ni « il y a 3 j ». */
+function dahuaAgeText(_time) {
+  var now = dahuaLastSeen.now + Math.floor((Date.now() - dahuaLastSeen.received) / 1000)
+  var age = Math.max(0, now - _time)
+  if (age < 60) {
+    return '{{il y a moins d\'une minute}}'
+  }
+  if (age < 3600) {
+    return '{{il y a %s min}}'.replace('%s', Math.floor(age / 60))
+  }
+  if (age < 86400) {
+    return '{{il y a %s h}}'.replace('%s', Math.floor(age / 3600))
+  }
+  return '{{il y a %s j}}'.replace('%s', Math.floor(age / 86400))
+}
+
+/* Remplit la cellule « Dernière fois » d'une ligne de condition.
+
+   La correspondance est celle du moteur (dahuaRule::conditionMatches) : caméra
+   précise ou n'importe laquelle, détection précise ou n'importe laquelle, et
+   rien d'autre. Pour « n'importe laquelle », c'est la plus récente de toutes
+   qui compte. « Fois » n'est pas pris en compte : l'indicateur dit si la
+   condition PEUT être remplie, pas si elle l'a été dans une fenêtre.
+
+   Le but est de rendre visible la règle qui ne peut pas se déclencher : une
+   condition jamais vue ne produit aucune erreur, seulement un silence que
+   l'utilisateur met sur le compte du plugin. */
+function dahuaRenderLastSeen(_row) {
+  var target = _row.querySelector('.dahuaLastSeen')
+  if (target === null) {
+    return
+  }
+  target.textContent = ''
+  target.className = 'dahuaLastSeen'
+  target.removeAttribute('title')
+
+  var source = _row.querySelector('.ruleAttr[data-l1key="source"]')
+  var event = _row.querySelector('.ruleAttr[data-l1key="event"]')
+  /* Ligne incomplète : le moteur l'ignore, le résumé le dit déjà. */
+  if (source === null || event === null || source.value === '' || event.value === '') {
+    return
+  }
+  if (dahuaLastSeen === null) {
+    target.className = 'dahuaLastSeen text-muted'
+    target.textContent = '…'
+    return
+  }
+
+  var cameras = dahuaLastSeen.cameras
+  var ids = (source.value === 'any') ? Object.keys(cameras) : [source.value]
+  var best = null
+  var bestCamera = null
+  var known = 0
+  var disabled = 0
+  for (var i = 0; i < ids.length; i++) {
+    var camera = cameras[ids[i]]
+    if (!isset(camera) || !is_object(camera)) {
+      continue
+    }
+    known++
+    if (!camera.enabled) {
+      disabled++
+    }
+    var events = is_object(camera.events) ? camera.events : {}
+    var keys = (event.value === 'any') ? Object.keys(events) : [event.value]
+    for (var k = 0; k < keys.length; k++) {
+      var seen = events[keys[k]]
+      if (isset(seen) && is_object(seen) && (best === null || seen.time > best.time)) {
+        best = seen
+        bestCamera = ids[i]
+      }
+    }
+  }
+
+  /* Caméra supprimée : la liste le signale déjà, la condition ne peut plus
+     rien recevoir. */
+  if (known === 0) {
+    target.className = 'dahuaLastSeen text-muted'
+    target.textContent = '—'
+    target.title = '{{Aucune caméra ne correspond à cette condition.}}'
+    return
+  }
+
+  if (best === null) {
+    /* Une caméra désactivée continue d'alimenter le moteur, mais Jeedom
+       n'écrit plus ses commandes : son silence ne prouve rien. */
+    if (source.value !== 'any' && disabled > 0) {
+      target.className = 'dahuaLastSeen label label-default'
+      target.textContent = '{{Caméra désactivée}}'
+      target.title = '{{Jeedom n\'enregistre pas les détections d\'une caméra désactivée : impossible de dire si elle émet celle-ci.}}'
+      return
+    }
+    target.className = 'dahuaLastSeen label label-danger'
+    target.textContent = '{{Jamais vu}}'
+    target.title = '{{Aucune détection correspondante n\'a jamais été reçue : la caméra n\'émet pas cet événement, et cette condition ne peut donc pas être remplie. Vérifiez dans le NVR la configuration de la détection de la caméra (règles IVS pour les lignes et les zones, détection de mouvement, détection humain / véhicule).}}'
+      + ((disabled > 0) ? ' {{Les caméras désactivées ne sont pas comptées.}}' : '')
+    return
+  }
+
+  /* L'âge est affiché même pour une détection encore à 1 : un « Start » dont
+     le « Stop » s'est perdu la laisse à 1 indéfiniment, et « en cours »
+     masquerait qu'elle date peut-être de la semaine dernière. */
+  target.textContent = dahuaAgeText(best.time)
+  target.title = '{{Dernière détection correspondante reçue}} : ' + best.date
+    + (best.active ? ' ({{détection en cours}})' : ' ({{fin de la détection}})')
+    + ((source.value === 'any') ? ' — ' + dahuaCameraName(bestCamera) : '')
 }
 
 /* Une ligne d'action, calquée sur le sélecteur d'action des scénarios
@@ -516,6 +676,11 @@ function printEqLogic(_eqLogic) {
   dahuaToggleThreshold()
   dahuaUpdateSummary()
   dahuaShowRuleState(_eqLogic)
+  /* Le relevé n'est demandé que pour une règle : un NVR ou une caméra n'a pas
+     de conditions à éclairer. */
+  if (typeSelect !== null && typeSelect.value === 'rule') {
+    dahuaLoadLastSeen()
+  }
   var template = document.getElementById('sel_dahuaRuleTemplate')
   if (template !== null) {
     template.value = ''
@@ -672,6 +837,12 @@ var dahuaContainer = document.getElementById('div_pageContainer') || document.bo
 dahuaContainer.addEventListener('change', function (event) {
   if (event.target.closest('#sel_dahuaType')) {
     dahuaToggleType()
+    /* Un équipement qu'on transforme en règle n'est pas passé par
+       printEqLogic en tant que tel : sans cela ses conditions resteraient
+       sur « … ». */
+    if (event.target.value === 'rule' && dahuaLastSeen === null) {
+      dahuaLoadLastSeen()
+    }
     return
   }
   if (event.target.closest('#sel_dahuaRuleMode')) {
@@ -692,6 +863,12 @@ dahuaContainer.addEventListener('change', function (event) {
   }
   if (event.target.closest('.dahuaRuleBlock')) {
     dahuaUpdateSummary()
+  }
+  /* Changer la caméra ou la détection d'une ligne change ce qu'elle attend :
+     l'indicateur suit la saisie, enregistrée ou non. */
+  var conditionRow = event.target.closest('tr.dahuaRuleCondition')
+  if (conditionRow !== null) {
+    dahuaRenderLastSeen(conditionRow)
   }
 })
 

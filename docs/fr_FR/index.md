@@ -360,6 +360,10 @@ Chaque ligne du tableau décrit une détection à attendre :
   détection*.
 - **Fois** — nombre d'occurrences exigées. Laissez 1 dans le cas courant ; mettez
   3 pour « trois passages devant la même caméra ».
+- **Dernière fois** — quand une détection reçue a rempli cette condition pour la
+  dernière fois ; **Jamais vu** signale une détection que la caméra n'émet pas
+  (par exemple une ligne franchie sans règle IVS configurée dans le NVR) : la
+  règle ne pourra pas se déclencher tant que ce n'est pas corrigé côté NVR.
 
 Une ligne dont la caméra ou la détection est restée sur « à choisir » est
 **ignorée**. C'est volontaire : une règle enregistrée sans avoir été remplie ne
