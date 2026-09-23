@@ -32,6 +32,7 @@ function dahua_update() {
     dahua_migrateCameraOnline();
     dahua_migrateRuleImages();
     dahua_migrateAlertWidget();
+    dahua_republishAlerts();
 }
 
 function dahua_remove() {
@@ -198,6 +199,32 @@ function dahua_migrateRuleImages() {
  * faut le faire, et une seule fois : la visibilité est ensuite la décision de
  * l'utilisateur, pas la nôtre.
  */
+/*
+ * Republie la dernière alerte de chaque règle, à chaque mise à jour.
+ *
+ * Jusqu'à la 0.6, la purge retirait les pleines résolutions sans prévenir la
+ * tuile : celle-ci proposait encore l'agrandissement d'une image effacée, et
+ * le clic répondait « Image indisponible ». La purge publie désormais ce
+ * qu'elle retire, mais les tuiles déjà périmées ne le seraient jamais, faute
+ * de nouvelle alerte sur la règle. Pas de drapeau « déjà fait » : l'opération
+ * est idempotente et ne coûte qu'une lecture par règle.
+ */
+function dahua_republishAlerts() {
+    foreach (eqLogic::byType('dahua') as $eqLogic) {
+        if ($eqLogic->getConfiguration('type') != dahua::TYPE_RULE) {
+            continue;
+        }
+        try {
+            $last = dahuaAlert::recent(1, $eqLogic->getId());
+            if (!empty($last)) {
+                dahuaAlert::publish($eqLogic, $last[0]['id'], $last[0]);
+            }
+        } catch (Throwable $e) {
+            log::add('dahua', 'error', 'republication ' . $eqLogic->getName() . ' : ' . $e->getMessage());
+        }
+    }
+}
+
 function dahua_migrateAlertWidget() {
     if (config::byKey('migration::alert_widget', 'dahua', 0) == 1) {
         return;

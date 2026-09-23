@@ -91,7 +91,7 @@ if (!isConnect('admin')) {
 				<input type="number" min="1" max="5000" step="1" class="configKey form-control" data-l1key="alert_keep" placeholder="300">
 			</div>
 			<div class="col-md-5">
-				<span class="help-block" style="margin:0;">{{Nombre total de dossiers d'alerte gardés, toutes règles confondues : une règle bavarde évince donc l'historique des autres. De 1 à 5000, 300 par défaut ; une valeur vide ou hors bornes revient au défaut. Compter environ 50 Mo par caméra concernée pour 300 alertes.}}</span>
+				<span class="help-block" style="margin:0;">{{Nombre total de dossiers d'alerte gardés, toutes règles confondues : une règle bavarde évince donc l'historique des autres, sauf la dernière alerte de chacune, toujours gardée. De 1 à 5000, 300 par défaut ; une valeur vide ou hors bornes revient au défaut. Compter environ 50 Mo par caméra concernée pour 300 alertes.}}</span>
 			</div>
 		</div>
 		<div class="form-group">
@@ -100,7 +100,7 @@ if (!isConnect('admin')) {
 				<input type="number" min="0" max="5000" step="1" class="configKey form-control" data-l1key="alert_keep_full" placeholder="30">
 			</div>
 			<div class="col-md-5">
-				<span class="help-block" style="margin:0;">{{Au-delà de ce rang, seules les vignettes et la description sont gardées : l'alerte reste consultable mais perd l'agrandissement. Une image pleine résolution pèse de 600 Ko à 1 Mo, et une alerte en porte jusqu'à deux par caméra. 0 pour ne garder que des vignettes ; la valeur est ramenée à celle du réglage précédent si elle la dépasse.}}</span>
+				<span class="help-block" style="margin:0;">{{Au-delà de ce rang, seules les vignettes et la description sont gardées : l'alerte reste consultable mais perd l'agrandissement. Une image pleine résolution pèse de 600 Ko à 1 Mo, et une alerte en porte jusqu'à deux par caméra. La dernière alerte de chaque règle, celle que montre sa tuile, garde toujours sa pleine résolution. 0 pour ne garder que des vignettes, y compris pour celle-là ; la valeur est ramenée à celle du réglage précédent si elle la dépasse.}}</span>
 			</div>
 		</div>
 	</fieldset>

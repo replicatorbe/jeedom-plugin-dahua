@@ -1104,17 +1104,51 @@ class dahuaAlert {
         }
         rsort($dirs);                                 // la plus récente d'abord
 
-        $rank = 0;
+        /*
+         * La dernière alerte de chaque règle est celle que montre sa tuile, et
+         * elle échappe aux deux quotas.
+         *
+         * Le rang est global, or les règles ne déclenchent pas au même rythme :
+         * une règle bavarde — NORD, trente alertes par jour — poussait en
+         * quelques heures la dernière alerte d'une règle rare au-delà du
+         * trentième rang. Ses pleines résolutions étaient effacées alors que la
+         * tuile, jamais republiée, annonçait toujours l'agrandissement : la
+         * vignette s'affichait, le clic répondait « Image indisponible ». Une
+         * fois sur deux selon l'heure, ce qui le rendait difficile à attribuer.
+         *
+         * Le surcoût est borné : une alerte par règle. Seul « 0 » pour la pleine
+         * résolution s'applique aussi à elle, puisque c'est un choix explicite
+         * de ne garder que des vignettes ; la tuile est alors republiée, pour
+         * qu'elle cesse de proposer un plein écran qui ne donnerait rien.
+         */
+        $shown = array();                             // règle => dernière alerte déjà vue
+        $rank  = 0;
         foreach ($dirs as $id) {
             $rank++;
-            if ($rank > $keep) {
+            $ruleId = self::ruleIdOf($id);
+            $latest = !isset($shown[$ruleId]) && self::ruleExists($ruleId);
+            $shown[$ruleId] = true;                   // un seul appel par règle
+            if ($rank > $keep && !$latest) {
                 self::removeDir($base . '/' . $id);
                 continue;
             }
-            if ($rank > $keepFull) {
-                self::stripFullImages($base . '/' . $id, $id);
+            if ($rank > $keepFull && !($latest && $keepFull > 0)) {
+                self::stripFullImages($base . '/' . $id, $id, $latest);
             }
         }
+    }
+
+    /* La règle d'un dossier se lit dans son nom (…_r<id>_…), sans ouvrir la
+     * description : la purge tourne chaque minute sur des centaines de
+     * dossiers. */
+    private static function ruleIdOf($_id) {
+        return preg_match('/_r(\d+)_/', $_id, $match) === 1 ? (int) $match[1] : 0;
+    }
+
+    /* Une règle supprimée n'a plus de tuile à servir : sa dernière alerte
+     * rentre dans le rang commun, sans quoi elle ne serait jamais purgée. */
+    private static function ruleExists($_ruleId) {
+        return $_ruleId > 0 && is_object(self::ruleOf(array('rule_id' => $_ruleId)));
     }
 
     /*
@@ -1137,7 +1171,7 @@ class dahuaAlert {
      * le plein écran. Le drapeau « full » le dit à l'interface, qui cesse alors
      * de proposer un agrandissement qui ne donnerait rien.
      */
-    private static function stripFullImages($_dir, $_id) {
+    private static function stripFullImages($_dir, $_id, $_shown = false) {
         $files = glob($_dir . '/cam*_*.jpg');
         if ($files === false) {
             return;
@@ -1164,10 +1198,12 @@ class dahuaAlert {
             }
         }
         if ($removed) {
+            /* Le drapeau n'a d'effet sur la tuile que s'il lui parvient : la
+             * description seule ne suffit pas, la tuile lit la commande. */
             self::updateMeta($_id, function ($_meta) {
                 $_meta['full'] = 0;
                 return $_meta;
-            });
+            }, $_shown ? self::publisher($_id) : null);
         }
     }
 

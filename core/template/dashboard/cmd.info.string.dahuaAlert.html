@@ -168,7 +168,7 @@
          bootbox dépend d\'un réglage jQuery que l\'utilisateur peut désactiver.
          On lui passe un élément construit ici — contentUrl ferait un chargement
          HTML, pas un affichage d\'image. */
-      function dahuaAlertZoom(_url, _legend) {
+      function dahuaAlertZoom(_url, _thumb, _legend) {
         /* Une seule fenêtre à la fois. Un double-clic en ouvrait deux,
            superposées et identiques : le premier « Fermer » ne semblait rien
            faire, et le bouton passait pour cassé. */
@@ -216,9 +216,17 @@
         full.className = 'dahuaAlertFull'
         full.setAttribute('alt', _legend)
         /* L\'image peut avoir été purgée entre l\'affichage de la tuile et le
-           clic : la rétention haute ne garde les pleines résolutions que
-           quelques jours. Mieux vaut le dire qu\'une icône cassée. */
+           clic, ou la tuile porter une valeur publiée avant la purge. La
+           vignette, elle, est encore là puisqu\'on vient de cliquer dessus :
+           on l\'agrandit en le disant, plutôt que de ne rien montrer. Seul un
+           second échec mérite « Image indisponible ». */
         full.addEventListener('error', function () {
+          if (full.getAttribute('data-fallback') !== '1' && _thumb !== '' && _thumb !== _url) {
+            full.setAttribute('data-fallback', '1')
+            body.insertBefore(dahuaAlertNote('{{Pleine résolution effacée : vignette agrandie}}', false), full)
+            full.setAttribute('src', _thumb)
+            return
+          }
           full.remove()
           body.appendChild(dahuaAlertNote('{{Image indisponible}}', true))
         })
@@ -285,7 +293,7 @@
         if (_hd) {
           thumb.setAttribute('title', hint + ' — {{cliquer pour agrandir}}')
           thumb.addEventListener('click', function () {
-            dahuaAlertZoom(dahuaAlertUrl(_alert, _image.f), _camera + ' — ' + legend)
+            dahuaAlertZoom(dahuaAlertUrl(_alert, _image.f), dahuaAlertUrl(_alert, dahuaAlertThumb(_image.f)), _camera + ' — ' + legend)
           })
         } else {
           /* Pleines résolutions purgées : pas d\'agrandissement qui ne donnerait
