@@ -103,5 +103,14 @@ if (!isConnect('admin')) {
 				<span class="help-block" style="margin:0;">{{Au-delà de ce rang, seules les vignettes et la description sont gardées : l'alerte reste consultable mais perd l'agrandissement. Une image pleine résolution pèse de 600 Ko à 1 Mo, et une alerte en porte jusqu'à deux par caméra. La dernière alerte de chaque règle, celle que montre sa tuile, garde toujours sa pleine résolution. 0 pour ne garder que des vignettes, y compris pour celle-là ; la valeur est ramenée à celle du réglage précédent si elle la dépasse.}}</span>
 			</div>
 		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Pleine résolution garantie pendant (jours)}}</label>
+			<div class="col-md-2">
+				<input type="number" min="0" max="5000" step="1" class="configKey form-control" data-l1key="alert_keep_full_days" placeholder="3">
+			</div>
+			<div class="col-md-5">
+				<span class="help-block" style="margin:0;">{{Toute alerte plus récente que ce nombre de jours garde sa pleine résolution, quel que soit son rang : une règle bavarde ne peut plus priver d'agrandissement les alertes de la veille. 0 désactive cette garantie, seul le rang compte alors. 3 par défaut. Sans effet si le réglage précédent vaut 0. Le nombre total d'alertes conservées borne toujours la place occupée.}}</span>
+			</div>
+		</div>
 	</fieldset>
 </form>

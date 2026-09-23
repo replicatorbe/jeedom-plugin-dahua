@@ -265,6 +265,11 @@ Deux étages, réglables dans la configuration du plugin :
 |---|---|
 | Alertes conservées | au-delà, les dossiers les plus anciens sont supprimés entièrement. |
 | Alertes conservées en pleine résolution | au-delà de ce rang, seules les vignettes et la description restent : l'alerte se consulte toujours, elle perd l'agrandissement. |
+| Pleine résolution garantie pendant (jours) | toute alerte plus récente garde sa pleine résolution, quel que soit son rang (3 jours par défaut, 0 désactive). |
+
+La dernière alerte de chaque règle, celle que montre sa tuile, garde toujours
+sa pleine résolution. Seul un réglage de pleine résolution à 0 s'applique aussi
+à elle, et à la garantie par âge.
 
 Une vignette pèse environ 25 Ko, l'image entière de 600 Ko à 1 Mo. Avec les
 valeurs par défaut (300 et 30), comptez une cinquantaine de méga-octets par
@@ -304,6 +309,7 @@ motorisées, et le preset doit exister dans le NVR.
 | Capturer une image fraîche à chaque alerte | demande au NVR une capture des caméras concernées au moment du déclenchement, en plus de l'image de détection. À décocher si le NVR est fragile ou la liaison lente. |
 | Alertes conservées | nombre total de dossiers d'alerte gardés, toutes règles confondues. |
 | Alertes conservées en pleine résolution | au-delà de ce rang, il ne reste que les vignettes et la description. |
+| Pleine résolution garantie pendant (jours) | une alerte plus récente garde sa pleine résolution quel que soit son rang. |
 
 Le port d'écoute local n'est jamais exposé à l'extérieur : le démon n'écoute que
 sur la boucle locale, et chaque ordre est signé par la clé API du plugin.

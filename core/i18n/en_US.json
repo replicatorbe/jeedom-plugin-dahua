@@ -356,7 +356,9 @@
         "Alertes conservées": "Alerts kept",
         "Nombre total de dossiers d'alerte gardés, toutes règles confondues : une règle bavarde évince donc l'historique des autres, sauf la dernière alerte de chacune, toujours gardée. De 1 à 5000, 300 par défaut ; une valeur vide ou hors bornes revient au défaut. Compter environ 50 Mo par caméra concernée pour 300 alertes.": "Total number of alert folders kept, all rules taken together: a chatty rule therefore evicts the history of the others, except the latest alert of each, always kept. From 1 to 5000, 300 by default; an empty or out of range value falls back to the default. Count about 50 MB per camera involved for 300 alerts.",
         "Alertes conservées en pleine résolution": "Alerts kept at full resolution",
-        "Au-delà de ce rang, seules les vignettes et la description sont gardées : l'alerte reste consultable mais perd l'agrandissement. Une image pleine résolution pèse de 600 Ko à 1 Mo, et une alerte en porte jusqu'à deux par caméra. La dernière alerte de chaque règle, celle que montre sa tuile, garde toujours sa pleine résolution. 0 pour ne garder que des vignettes, y compris pour celle-là ; la valeur est ramenée à celle du réglage précédent si elle la dépasse.": "Beyond this rank only the thumbnails and the description are kept: the alert stays readable but loses the enlargement. A full resolution image weighs 600 KB to 1 MB, and an alert carries up to two of them per camera. The latest alert of each rule, the one its tile shows, always keeps its full resolution. 0 to keep thumbnails only, including that one; the value is lowered to the previous setting if it exceeds it."
+        "Au-delà de ce rang, seules les vignettes et la description sont gardées : l'alerte reste consultable mais perd l'agrandissement. Une image pleine résolution pèse de 600 Ko à 1 Mo, et une alerte en porte jusqu'à deux par caméra. La dernière alerte de chaque règle, celle que montre sa tuile, garde toujours sa pleine résolution. 0 pour ne garder que des vignettes, y compris pour celle-là ; la valeur est ramenée à celle du réglage précédent si elle la dépasse.": "Beyond this rank only the thumbnails and the description are kept: the alert stays readable but loses the enlargement. A full resolution image weighs 600 KB to 1 MB, and an alert carries up to two of them per camera. The latest alert of each rule, the one its tile shows, always keeps its full resolution. 0 to keep thumbnails only, including that one; the value is lowered to the previous setting if it exceeds it.",
+        "Pleine résolution garantie pendant (jours)": "Full resolution guaranteed for (days)",
+        "Toute alerte plus récente que ce nombre de jours garde sa pleine résolution, quel que soit son rang : une règle bavarde ne peut plus priver d'agrandissement les alertes de la veille. 0 désactive cette garantie, seul le rang compte alors. 3 par défaut. Sans effet si le réglage précédent vaut 0. Le nombre total d'alertes conservées borne toujours la place occupée.": "Any alert more recent than this number of days keeps its full resolution, whatever its rank: a chatty rule can no longer deprive the previous day's alerts of their enlargement. 0 disables this guarantee, only the rank then counts. 3 by default. No effect if the previous setting is 0. The total number of alerts kept still bounds the space used."
     },
     "plugins/dahua/core/class/dahuaRule.class.php": {
         "corrélation ignorée, temporisation en cours": "correlation ignored, cooldown in progress",
@@ -451,7 +453,9 @@
         "Image de l'alerte en pleine résolution": "Full resolution alert image",
         "Page": "Page",
         "Plus anciennes": "Older",
-        "Plus récentes": "Newer"
+        "Plus récentes": "Newer",
+        "plus récentes, et toutes celles des": "most recent, and all those of the last",
+        "derniers jours, avec leurs images en pleine résolution ; au-delà il ne reste que les vignettes.": "days, with their full resolution images; beyond that only the thumbnails remain."
     },
     "core/template/dashboard/cmd.info.string.dahua.html": {
         "Affiche durée ou date de la valeur": "Displays duration or date of the value",

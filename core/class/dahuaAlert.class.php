@@ -94,6 +94,16 @@ class dahuaAlert {
     const DEFAULT_KEEP      = 300;
     const DEFAULT_KEEP_FULL = 30;
 
+    /*
+     * Âge en deçà duquel une alerte garde sa pleine résolution, quel que soit
+     * son rang. Le rang seul ne dit rien du temps : à trente alertes par jour,
+     * les trente dernières couvrent une demi-journée, et l'alerte de ce matin
+     * n'était déjà plus agrandissable le soir. Trois jours couvrent un
+     * week-end d'absence, le cas où l'on revient sur des alertes qu'on n'a pas
+     * vues passer.
+     */
+    const DEFAULT_KEEP_FULL_DAYS = 3;
+
     /* Plafond de saisie. Au-delà, ce n'est plus une rétention, c'est une fuite. */
     const MAX_KEEP = 5000;
 
@@ -1097,6 +1107,9 @@ class dahuaAlert {
          */
         $keep     = self::setting('alert_keep', self::DEFAULT_KEEP, 1);
         $keepFull = min($keep, self::setting('alert_keep_full', self::DEFAULT_KEEP_FULL, 0));
+        /* Zéro désactive la garantie par âge : seul le rang compte alors. */
+        $fullDays = self::setting('alert_keep_full_days', self::DEFAULT_KEEP_FULL_DAYS, 0);
+        $fullSince = time() - $fullDays * 86400;
 
         $dirs = self::listDirs($base);
         if (empty($dirs)) {
@@ -1120,6 +1133,12 @@ class dahuaAlert {
          * résolution s'applique aussi à elle, puisque c'est un choix explicite
          * de ne garder que des vignettes ; la tuile est alors republiée, pour
          * qu'elle cesse de proposer un plein écran qui ne donnerait rien.
+         *
+         * La garantie par âge s'ajoute au rang, elle ne le remplace pas : une
+         * alerte garde sa pleine résolution si elle est parmi les plus
+         * récentes en nombre OU en temps. Le disque reste borné par le nombre
+         * total de dossiers, que l'âge ne protège pas. Et « 0 » pour la pleine
+         * résolution l'emporte ici aussi, pour la même raison.
          */
         $shown = array();                             // règle => dernière alerte déjà vue
         $rank  = 0;
@@ -1132,9 +1151,10 @@ class dahuaAlert {
                 self::removeDir($base . '/' . $id);
                 continue;
             }
-            if ($rank > $keepFull && !($latest && $keepFull > 0)) {
-                self::stripFullImages($base . '/' . $id, $id, $latest);
+            if ($keepFull > 0 && ($rank <= $keepFull || $latest || self::timeOf($id) >= $fullSince)) {
+                continue;
             }
+            self::stripFullImages($base . '/' . $id, $id, $latest);
         }
     }
 
@@ -1143,6 +1163,13 @@ class dahuaAlert {
      * dossiers. */
     private static function ruleIdOf($_id) {
         return preg_match('/_r(\d+)_/', $_id, $match) === 1 ? (int) $match[1] : 0;
+    }
+
+    /* La date de l'alerte, lue elle aussi dans son nom : il commence par la
+     * date du déclenchement en UTC (voir newId()). */
+    private static function timeOf($_id) {
+        $date = DateTime::createFromFormat('!Ymd-His', substr($_id, 0, 15), new DateTimeZone('UTC'));
+        return ($date === false) ? 0 : $date->getTimestamp();
     }
 
     /* Une règle supprimée n'a plus de tuile à servir : sa dernière alerte

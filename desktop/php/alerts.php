@@ -207,6 +207,10 @@ if ($dahuaKeepFull < 0 || $dahuaKeepFull > dahuaAlert::MAX_KEEP) {
 	$dahuaKeepFull = dahuaAlert::DEFAULT_KEEP_FULL;
 }
 $dahuaKeepFull = min($dahuaKeep, $dahuaKeepFull);
+$dahuaKeepDays = (int) config::byKey('alert_keep_full_days', 'dahua', dahuaAlert::DEFAULT_KEEP_FULL_DAYS);
+if ($dahuaKeepDays < 0 || $dahuaKeepDays > dahuaAlert::MAX_KEEP) {
+	$dahuaKeepDays = dahuaAlert::DEFAULT_KEEP_FULL_DAYS;
+}
 
 $dahuaNow = time();
 ?>
@@ -336,7 +340,12 @@ $dahuaNow = time();
 				echo ' {{Page}} ' . $dahuaPage . '.';
 			}
 			echo '<br>{{Rétention :}} ' . $dahuaKeep . ' {{alertes conservées, dont les}} ' . $dahuaKeepFull;
-			echo ' {{plus récentes avec leurs images en pleine résolution ; au-delà il ne reste que les vignettes.}}';
+			if ($dahuaKeepFull > 0 && $dahuaKeepDays > 0) {
+				echo ' {{plus récentes, et toutes celles des}} ' . $dahuaKeepDays;
+				echo ' {{derniers jours, avec leurs images en pleine résolution ; au-delà il ne reste que les vignettes.}}';
+			} else {
+				echo ' {{plus récentes avec leurs images en pleine résolution ; au-delà il ne reste que les vignettes.}}';
+			}
 			echo '</div>';
 
 			echo '<div class="alert alert-info" id="div_dahuaAlertNoMatch" style="margin:5px;display:none;">{{Aucune alerte ne correspond à ce filtre.}}</div>';

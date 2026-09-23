@@ -259,6 +259,11 @@ Two stages, set in the plugin configuration:
 |---|---|
 | Alerts kept | beyond that number, the oldest folders are deleted entirely. |
 | Alerts kept at full resolution | beyond that rank, only the thumbnails and the description remain: the alert can still be read, it loses the enlargement. |
+| Full resolution guaranteed for (days) | any more recent alert keeps its full resolution, whatever its rank (3 days by default, 0 disables it). |
+
+The latest alert of each rule, the one its tile shows, always keeps its full
+resolution. Only a full resolution setting of 0 applies to it as well, and to
+the age guarantee.
 
 A thumbnail weighs about 25 KB, the whole image 600 KB to 1 MB. With the
 default values (300 and 30), count about fifty megabytes per camera involved.
@@ -297,6 +302,7 @@ and the preset must exist in the NVR.
 | Take a fresh snapshot on every alert | asks the NVR for a snapshot of the cameras involved at trigger time, in addition to the image at detection. Uncheck it if the NVR is fragile or the link slow. |
 | Alerts kept | total number of alert folders kept, all rules taken together. |
 | Alerts kept at full resolution | beyond that rank, only the thumbnails and the description remain. |
+| Full resolution guaranteed for (days) | a more recent alert keeps its full resolution whatever its rank. |
 
 The local listening port is never exposed to the outside: the daemon only
 listens on the loopback interface, and every order is signed with the plugin API
