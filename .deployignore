@@ -9,3 +9,6 @@
 # silencieuse : les tuiles se videraient sans la moindre erreur nulle part.
 # data/snapshots/ est déjà exclu par l'outil, pas data/alerts/.
 data/alerts/
+
+# Jeux d'essai : outils de développement, inutiles côté Jeedom.
+tests/
