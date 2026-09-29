@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8 — 2026-09-29
+
+**Waiting for the picture before notifying**
+
+- New rule option **Wait for the fresh snapshot before acting**, with a
+  **maximum delay** (10 s by default, 1 to 30 s). A notification set as an
+  action, attaching *Image file*, ran at trigger time — before the fresh
+  snapshot — and therefore without a picture whenever the image from detection
+  time was missing: the *Test* button, or a latest snapshot too old.
+- The trigger actions run as soon as the first fresh snapshot is saved, or when
+  all of them have failed, and at the latest after the maximum delay, without a
+  picture if need be. The log tells which case happened and the actual delay.
+  *Triggered* still goes to 1 immediately.
+- The actions run only once per trigger and are never lost: the wait is
+  recorded in the alert folder and recovered after a Jeedom restart (up to one
+  hour after the deadline). The release actions never run before them.
+- Unticked by default: existing rules keep their behavior.
+
 ## 0.7 — 2026-09-23
 
 **Attaching an alert image to a notification**

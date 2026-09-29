@@ -110,8 +110,14 @@ le NVR l'affiche (`D1` → 1, `D2` → 2...).
 | Dernier événement | texte | code et action du dernier événement reçu |
 | Date du dernier événement | texte | horodatage de ce dernier événement |
 | Dernière image | texte | adresse de la dernière capture |
+| Fichier de l'image | texte | la même capture, en chemin sur le disque : à joindre à une notification |
 | Capturer une image | action | déclenche une capture immédiate |
 | Aller au preset | action | rappelle un preset PTZ |
+
+Si une capture échoue (caméra hors ligne, NVR injoignable), *Dernière image* et
+*Fichier de l'image* passent sur une image « Image indisponible » horodatée, au
+nom de la caméra. Une notification qui joint la capture ne montre ainsi jamais
+une ancienne photo comme si elle venait d'être prise.
 
 Les commandes binaires passent à `1` au début de l'événement et retombent à `0`
 à sa fin. Les événements que le NVR n'annonce pas comme terminés retombent
@@ -287,6 +293,11 @@ plutôt que le lien : la commande *Fichier de l'image* de chaque règle donne
 directement son chemin sur le disque, à placer dans le champ de pièce jointe de
 votre plugin de notification.
 
+Si cette notification est une **action de la règle**, cochez *Attendre la
+capture fraîche avant d'agir* (voir [Les actions](#les-actions)) : sans cela,
+elle part au déclenchement, avant que la capture fraîche n'arrive, et peut
+partir sans photo quand l'image du moment de la détection manque.
+
 ## PTZ
 
 La commande **Aller au preset** rappelle un preset enregistré dans le NVR. Sans
@@ -453,6 +464,66 @@ gauche de chaque ligne désactivent l'action ou l'exécutent en tâche de fond.
 Ces deux blocs sont facultatifs. La commande *Déclenchée* change d'état dans tous
 les cas : si vous préférez un scénario, déclenchez-le simplement dessus.
 
+#### Attendre la capture fraîche avant d'agir
+
+Au déclenchement, l'image du moment de la détection peut manquer — bouton
+*Tester*, ou dernière capture de la caméra trop ancienne — et la capture fraîche
+n'arrive qu'une seconde ou deux plus tard. Une notification configurée en action,
+par exemple `title=Intrusion extérieure | files=#[Extérieur][Intrusion][Fichier de l'image]#`,
+partirait alors sans photo.
+
+Cochez **Attendre la capture fraîche avant d'agir** pour retenir les *Actions au
+déclenchement* :
+
+- elles partent **dès que la première capture fraîche de l'alerte est
+  enregistrée** — c'est alors la meilleure image de l'alerte, celle que
+  désignent *Fichier de l'image*, *Image du déclenchement* et *Adresse de
+  l'image*, déjà à jour quand les actions partent. Attendre les autres caméras
+  retarderait l'alarme du temps de la plus lente, pour une notification qui ne
+  joint qu'une image ;
+- ou dès que **toutes les captures demandées ont échoué** : il n'y a plus rien à
+  attendre ;
+- et **au plus tard après le délai maximal** (10 s par défaut, de 1 à 30 s) :
+  si la photo n'est toujours pas là, elles partent quand même, sans photo. Une
+  caméra tombée ne doit jamais rendre l'alarme muette.
+
+Le journal `dahua` indique lequel de ces cas s'est produit et le délai réel,
+par exemple « actions jouées après 1,2 s : capture fraîche enregistrée » ou
+« actions jouées après 10,0 s : délai maximum atteint sans capture fraîche,
+actions jouées sans photo ».
+
+Ce qui ne change pas :
+
+- *Déclenchée* passe à 1 **immédiatement** ; seules les actions sont retenues.
+  Un scénario déclenché sur *Déclenchée* n'attend donc pas : c'est à lui
+  d'attendre s'il joint l'image ;
+- la temporisation, la condition d'armement et le bouton *Tester* se comportent
+  comme avant — *Tester* attend lui aussi la capture ;
+- les actions ne sont jouées **qu'une fois** par déclenchement, même si la
+  capture arrive pile à l'échéance.
+
+**Durée de maintien plus courte que l'attente** : le retour au repos attend que
+les actions du déclenchement soient parties. *Déclenchée* reste alors à 1 un peu
+plus longtemps, mais les *Actions au retour au repos* ne partent jamais avant
+celles du déclenchement. Réinitialiser ou désactiver la règle pendant l'attente
+joue aussitôt les actions en attente, sans photo, puis celles du retour.
+
+**Redémarrage de Jeedom pendant l'attente** : l'attente est inscrite dans le
+dossier de l'alerte, sur le disque. Si le processus qui la surveille disparaît,
+les actions sont rattrapées à la détection suivante ou, au plus tard, par le
+cron minute du plugin. Retrouvées plus d'une heure après leur échéance, elles
+ne sont plus jouées — une sirène ou une notification « Intrusion » arrivant si
+tard ferait plus de mal que de bien — et un message l'annonce dans le centre de
+messages.
+
+Si *Capturer une image fraîche à chaque alerte* est décoché dans la
+configuration du plugin, ou si le démon est arrêté, aucune capture n'est en
+route : les actions partent immédiatement, comme sans l'option. La page de la
+règle le signale.
+
+L'option est décochée par défaut, y compris sur les règles existantes, qui
+gardent leur comportement.
+
 ### Commandes créées
 
 | Commande | Type | Rôle |
@@ -461,6 +532,7 @@ les cas : si vous préférez un scénario, déclenchez-le simplement dessus.
 | Détail du déclenchement | info / texte | « NORD Ligne franchie 12:00:03 + NORD Mouvement 12:00:05 » |
 | Image du déclenchement | info / texte | Adresse de la meilleure image de la dernière alerte — la capture fraîche si elle est arrivée, sinon celle de la détection. Vidée quand l'alerte n'a aucune image, plutôt que de laisser celle du déclenchement précédent. |
 | Fichier de l'image | info / texte | La même image, en chemin sur le disque de Jeedom : c'est elle qu'on joint à une notification. Vidée dans les mêmes cas. Masquée par défaut. |
+| Adresse de l'image (accès par clé) | info / texte | La même image, en adresse complète sur le réseau local, lisible sans session avec la *clé d'accès aux images* (configuration du plugin) en authentification HTTP Basic. Vidée dans les mêmes cas. Masquée par défaut. |
 | Images de l'alerte | info / texte | Toutes les images de la dernière alerte, avec le nom de chaque caméra. C'est la commande qui porte la tuile du dashboard. |
 | Tester | action | Joue le déclenchement pour de vrai, actions comprises. Masquée par défaut : elle exécute toutes les actions de la règle, y compris sur des équipements auxquels l'utilisateur du dashboard n'a pas forcément droit. |
 | Réinitialiser | action | Remet la règle au repos, joue les actions de retour et oublie les détections en attente |
@@ -472,8 +544,16 @@ Pour envoyer une photo dans une notification, utilisez *Fichier de l'image* :
 l'adresse de *Image du déclenchement* demande une session Jeedom, qu'un service
 externe n'a pas. Au passage de *Déclenchée* à 1, la commande désigne l'image du
 moment de la détection ; la capture fraîche la remplace quelques secondes plus
-tard. Pour joindre celle-ci, faites attendre le scénario une dizaine de secondes
-avant de lire la commande.
+tard. Pour joindre celle-ci depuis une action de la règle, cochez *Attendre la
+capture fraîche avant d'agir* ; depuis un scénario, faites-le attendre une
+dizaine de secondes avant de lire la commande.
+
+Pour afficher la dernière image d'une règle dans **JeedomConnect**, créez un
+widget *Caméra* : *Commande URL SnapShot* = *Adresse de l'image (accès par
+clé)*, *Authentification Snapshot* = Basic, un nom d'utilisateur quelconque et,
+en mot de passe, la *clé d'accès aux images* affichée dans la configuration du
+plugin. Le widget charge l'image côté serveur ; la clé ne donne accès qu'aux
+images, jamais au NVR.
 
 ### Bon à savoir
 

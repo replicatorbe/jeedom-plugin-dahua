@@ -75,6 +75,56 @@ class dahuaRule {
     /* Cause du dernier refus de déclenchement, pour que « Tester » soit explicite. */
     private static $_refusal = '';
 
+    /*
+     * Attente de la capture fraîche avant de jouer les actions (option
+     * « wait_live » d'une règle). Dix secondes par défaut : c'est le délai
+     * au-delà duquel le démon abandonne lui-même une capture d'alerte
+     * (ALERT_SHOT_TIMEOUT), attendre plus longtemps n'apporterait rien dans le
+     * cas courant. Trente au plus : une alarme qui se tait une demi-minute
+     * n'en est déjà plus tout à fait une.
+     */
+    const DEFAULT_WAIT_LIVE_MAX = 10;
+    const MIN_WAIT_LIVE_MAX     = 1;
+    const MAX_WAIT_LIVE_MAX     = 30;
+
+    /*
+     * Cadence à laquelle le processus de secours relit l'alerte. L'événement
+     * « capture fraîche enregistrée » lève l'attente sans délai ; ce sondage
+     * n'est que la ceinture sous les bretelles, pour le cas où cet événement
+     * ne réveillerait rien. Un quart de seconde ne se voit pas sur une
+     * notification, et relire un meta.json de 1 Ko quarante fois ne coûte rien.
+     */
+    const WAIT_POLL = 0.25;
+
+    /*
+     * Marge laissée au processus de secours avant que checkHold() ne force
+     * lui-même des actions dont l'échéance est passée. Sans elle, les deux se
+     * disputeraient chaque échéance — sans danger, le jeton est unique, mais
+     * le journal attribuerait le départ à l'un ou à l'autre au hasard.
+     */
+    const WAIT_GRACE = 2;
+
+    /*
+     * Au-delà de ce retard, des actions retrouvées en attente (Jeedom arrêté
+     * pendant l'attente, puis relancé) ne sont plus jouées : une sirène qui
+     * se met à hurler une heure après l'intrusion, ou une notification
+     * « Intrusion » reçue le lendemain matin comme si elle venait d'avoir
+     * lieu, feraient plus de mal que de bien. Une heure couvre largement un
+     * redémarrage, une mise à jour ou une coupure de courant brève — les cas
+     * réels. L'abandon est journalisé en erreur ET annoncé au centre de
+     * messages : il ne doit jamais passer inaperçu.
+     */
+    const WAIT_MAX_LATE = 3600;
+
+    /*
+     * Horloge et sommeil, remplaçables par le jeu d'essai : vérifier « capture
+     * arrivée à 1 s, actions à 1 s » ou « rien d'arrivé, actions à 10 s » sans
+     * horloge maîtrisée demanderait de vraies attentes et resterait sujet aux
+     * aléas de la machine. En production, ces deux propriétés restent nulles.
+     */
+    public static $_clock   = null;
+    public static $_sleeper = null;
+
     /* ================================================================ RÈGLES */
 
     /* Les règles désactivées sont exclues : la case « Activer » du coeur est
@@ -483,6 +533,7 @@ class dahuaRule {
          * Un disque plein ou un dossier illisible se journalise et la règle
          * continue son travail.
          */
+        $alertId = '';
         try {
             $alertId = dahuaAlert::open($_rule, $_group, $detail, self::namedCameras($_rule));
             if ($alertId !== '') {
@@ -494,10 +545,291 @@ class dahuaRule {
                    . __('dossier d\'alerte non créé :', __FILE__) . ' ' . $e->getMessage());
         }
 
+        /* « Déclenchée » passe à 1 tout de suite, attente ou pas : un scénario
+         * qui en dépend, la tuile, l'historique ne doivent pas payer l'attente
+         * de la photo. Seules les actions de la règle sont différées. */
         $_rule->checkAndUpdateCmd('triggered', 1);
 
-        self::runActions($_rule, 'actions');
+        if (!self::deferActions($_rule, $_state, $alertId)) {
+            self::runActions($_rule, 'actions');
+        }
         return true;
+    }
+
+    /* ================================================== ACTIONS DIFFÉRÉES */
+
+    /*
+     * Pourquoi différer. Au déclenchement, l'image « à la détection » peut
+     * manquer — bouton « Tester », capture trop ancienne pour être appariée —
+     * et la capture fraîche demandée au démon n'arrive qu'une seconde plus
+     * tard. Une notification qui joint « Fichier de l'image » partait donc
+     * sans photo. L'option retient les actions jusqu'à cette capture, et au
+     * plus wait_live_max secondes : passé ce délai, elles partent quand même,
+     * sans photo. Une alarme muette parce que la caméra est tombée serait le
+     * pire des résultats.
+     *
+     * Le mécanisme a trois déclencheurs, et un seul jeton :
+     *   1. l'événement — jeeDahua.php appelle onLiveShot() dès qu'une capture
+     *      fraîche est inscrite dans le dossier (voie normale, sans délai) ;
+     *   2. le secours — un processus PHP détaché (core/php/jeeDahuaWait.php)
+     *      qui relit l'alerte quatre fois par seconde et joue les actions à
+     *      l'échéance. C'est lui qui tient la promesse « au plus tard » :
+     *      aucun cron n'est assez fin pour dix secondes ;
+     *   3. le rattrapage — checkHold() à chaque lot d'événements, et le cron
+     *      minute, qui jouent toute attente dont l'échéance est dépassée : le
+     *      processus de secours meurt avec Jeedom, l'attente, elle, est sur le
+     *      disque.
+     * Le jeton est pris dans dahuaAlert::claimActions(), sous le verrou de
+     * l'alerte : exactement une exécution par déclenchement, quel que soit
+     * l'ordre d'arrivée des candidats.
+     *
+     * Retourne true si les actions sont différées ; false si l'appelant doit
+     * les jouer tout de suite.
+     */
+    private static function deferActions($_rule, &$_state, $_alertId) {
+        if ((int) $_rule->getConfiguration('wait_live', 0) != 1 || $_alertId === '') {
+            return false;
+        }
+        /* Capture fraîche décochée dans la configuration du plugin : aucune
+         * photo n'est en route, attendre ne ferait que retarder l'alarme. */
+        if ((int) config::byKey('alert_shot', 'dahua', 1) != 1) {
+            log::add('dahua', 'debug', $_rule->getHumanName() . ' — '
+                   . __('pas d\'attente : la capture fraîche est désactivée dans la configuration du plugin', __FILE__));
+            return false;
+        }
+        $max   = self::waitLiveMax($_rule);
+        $since = self::now();
+        $outcome = dahuaAlert::deferActions($_alertId, $_rule->getId(), $since, $since + $max);
+        if ($outcome !== dahuaAlert::ACTIONS_PENDING) {
+            $why = array(
+                'live'     => __('la capture fraîche est déjà là', __FILE__),
+                'returned' => __('les captures demandées ont déjà échoué', __FILE__),
+                'none'     => __('aucune capture fraîche n\'a pu être demandée (démon injoignable ?)', __FILE__),
+            );
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — ' . __('actions jouées sans attendre :', __FILE__)
+                   . ' ' . (isset($why[$outcome]) ? $why[$outcome] : __('attente impossible à inscrire dans le dossier d\'alerte', __FILE__)));
+            return false;
+        }
+
+        /*
+         * L'alerte est notée dans l'état de la règle, pour une seule raison :
+         * que le retour au repos l'attende (voir checkRule()). La vérité reste
+         * la description de l'alerte ; cette liste n'est qu'un index, relu et
+         * nettoyé contre elle à chaque passage.
+         */
+        if (!in_array($_alertId, $_state['deferred'], true)) {
+            $_state['deferred'][] = $_alertId;
+        }
+        self::saveState($_rule->getId(), $_state);
+
+        log::add('dahua', 'info', $_rule->getHumanName() . ' — '
+               . __('actions différées jusqu\'à la capture fraîche, au plus', __FILE__) . ' ' . $max . ' s');
+        self::spawnWatcher($_alertId);
+        return true;
+    }
+
+    /* Délai maximal d'attente de la règle, borné : 1 à 30 s, 10 par défaut. */
+    public static function waitLiveMax($_rule) {
+        $raw = $_rule->getConfiguration('wait_live_max', '');
+        $max = ($raw === '' || $raw === null) ? self::DEFAULT_WAIT_LIVE_MAX : (int) $raw;
+        return max(self::MIN_WAIT_LIVE_MAX, min(self::MAX_WAIT_LIVE_MAX, $max));
+    }
+
+    /*
+     * Lance le processus de secours, détaché : la requête qui déclenche la
+     * règle est celle du démon, qui abandonne au bout de quatre secondes — on
+     * ne peut pas y attendre dix secondes. Seul l'identifiant de l'alerte
+     * passe sur la ligne de commande ; il ne contient aucun secret, et le
+     * processus le revalide par liste blanche.
+     */
+    private static function spawnWatcher($_alertId) {
+        $script = realpath(__DIR__ . '/../php/jeeDahuaWait.php');
+        if ($script === false) {
+            log::add('dahua', 'error', __('Processus d\'attente introuvable : les actions partiront au rattrapage.', __FILE__));
+            return;
+        }
+        try {
+            system::php(escapeshellarg($script) . ' alert=' . escapeshellarg($_alertId) . ' >> /dev/null 2>&1 &');
+        } catch (Throwable $e) {
+            /* Pas fatal : checkHold() et le cron joueront l'attente échue. */
+            log::add('dahua', 'error', __('Processus d\'attente non lancé :', __FILE__) . ' ' . $e->getMessage());
+        }
+    }
+
+    /*
+     * Voie normale : une capture fraîche vient d'être inscrite dans l'alerte
+     * (jeeDahua.php, après noteCapture(), qui a déjà republié « Fichier de
+     * l'image »). Ne joue rien si l'alerte n'attendait pas, ou plus.
+     */
+    public static function onLiveShot($_alertId) {
+        return self::playDeferred($_alertId, false);
+    }
+
+    /*
+     * Le processus de secours : relit l'attente jusqu'à la capture ou jusqu'à
+     * l'échéance, puis joue. Il ne décide de rien lui-même : c'est
+     * claimActions() qui tranche, sous le verrou. S'il arrive second, il ne
+     * trouve plus rien et s'en va.
+     */
+    public static function watch($_alertId) {
+        /* Garde-fou contre une horloge qui ne passerait pas : on ne dort
+         * jamais plus que le plus long délai permis, plus une marge. */
+        $limit = self::now() + self::MAX_WAIT_LIVE_MAX + 5;
+        while (true) {
+            $pending = dahuaAlert::pendingActions($_alertId);
+            if ($pending === null) {
+                return false;                     // déjà joué par l'événement
+            }
+            $now = self::now();
+            if ($pending['ready'] !== '' || $now >= $pending['deadline'] || $now >= $limit) {
+                return self::playDeferred($_alertId, $now >= $pending['deadline'] || $now >= $limit);
+            }
+            self::pause(min(self::WAIT_POLL, max(0.01, $pending['deadline'] - $now)));
+        }
+    }
+
+    /*
+     * Le cron minute : joue les attentes échues que personne n'a jouées —
+     * processus de secours tué par un redémarrage, ou jamais lancé. Les
+     * dossiers plus anciens que le retard toléré ne sont même pas lus.
+     */
+    public static function recoverDeferred() {
+        $now = self::now();
+        $since = (int) $now - self::WAIT_MAX_LATE - self::MAX_WAIT_LIVE_MAX - 120;
+        foreach (dahuaAlert::pendingSince($since) as $alertId => $deadline) {
+            if ($now >= $deadline + self::WAIT_GRACE) {
+                self::playDeferred($alertId, true);
+            }
+        }
+    }
+
+    /*
+     * Prend le jeton et joue les actions, puis laisse la règle retomber si sa
+     * durée de maintien est écoulée entre-temps — les actions de fin ne
+     * partent jamais avant celles de début.
+     */
+    public static function playDeferred($_alertId, $_force) {
+        $rule = self::runDeferred($_alertId, $_force, '');
+        if (!is_object($rule)) {
+            return false;
+        }
+        /* Relu : ce processus n'est pas forcément celui qui a déclenché, et
+         * l'état en mémoire peut dater. */
+        unset(self::$_states[(int) $rule->getId()]);
+        self::checkRule($rule);
+        return true;
+    }
+
+    /*
+     * Prend le jeton et joue les actions « au déclenchement », sans toucher à
+     * l'état de la règle. Rend la règle si des actions ont été jouées (ou
+     * volontairement abandonnées pour retard), null sinon.
+     */
+    private static function runDeferred($_alertId, $_force, $_context) {
+        $now   = self::now();
+        $claim = dahuaAlert::claimActions($_alertId, $_force, $now);
+        if ($claim === null) {
+            return null;
+        }
+        $rule = dahuaAlert::ruleOf(array('rule_id' => $claim['rule_id']));
+        if (!is_object($rule)) {
+            log::add('dahua', 'warning', __('Actions différées sans règle (supprimée ?) :', __FILE__) . ' ' . $_alertId);
+            return null;
+        }
+        $elapsed = number_format(max(0, $now - $claim['since']), 1, ',', '');
+        $late    = $now - $claim['deadline'];
+
+        if ($claim['reason'] == 'timeout' && $late > self::WAIT_MAX_LATE) {
+            $text = $rule->getHumanName() . ' — ' . __('actions du déclenchement abandonnées : retrouvées', __FILE__)
+                  . ' ' . round($late) . ' ' . __('s après leur échéance (Jeedom arrêté pendant l\'attente ?)', __FILE__)
+                  . ' ' . $_alertId;
+            log::add('dahua', 'error', $text);
+            message::add('dahua', $text, '', 'ruleDeferred' . $rule->getId());
+            return $rule;
+        }
+
+        switch ($claim['reason']) {
+            case 'live':
+                $text = __('capture fraîche enregistrée', __FILE__);
+                break;
+            case 'returned':
+            case 'none':
+                $text = __('captures fraîches toutes en échec, actions jouées sans elles', __FILE__);
+                break;
+            case 'timeout':
+                $text = __('délai maximum atteint sans capture fraîche, actions jouées sans photo', __FILE__);
+                if ($late > self::WAIT_GRACE + 3) {
+                    $text .= ' (' . __('rattrapage, avec', __FILE__) . ' ' . round($late) . ' '
+                           . __('s de retard', __FILE__) . ')';
+                }
+                break;
+            default:
+                $text = ($_context != '') ? $_context : __('attente interrompue, actions jouées sans attendre la capture', __FILE__);
+        }
+        log::add('dahua', 'info', $rule->getHumanName() . ' — ' . __('actions jouées après', __FILE__)
+               . ' ' . $elapsed . ' s : ' . $text);
+        self::runActions($rule, 'actions');
+        return $rule;
+    }
+
+    /*
+     * Nettoie la liste des alertes en attente d'une règle contre leur
+     * description, et joue d'office celles dont l'échéance est largement
+     * dépassée (voir WAIT_GRACE). Rend true s'il reste une attente en cours.
+     */
+    private static function hasDeferred($_rule, &$_state) {
+        if (empty($_state['deferred'])) {
+            return false;
+        }
+        $left = array();
+        foreach ($_state['deferred'] as $alertId) {
+            $pending = dahuaAlert::pendingActions($alertId);
+            if ($pending === null) {
+                continue;                         // jouée, ou alerte purgée
+            }
+            if (self::now() >= $pending['deadline'] + self::WAIT_GRACE) {
+                self::runDeferred($alertId, true, '');
+                continue;
+            }
+            $left[] = $alertId;
+        }
+        if ($left !== $_state['deferred']) {
+            $_state['deferred'] = $left;
+            self::saveState($_rule->getId(), $_state);
+        }
+        return !empty($left);
+    }
+
+    /*
+     * Joue sans attendre toutes les actions encore en attente d'une règle.
+     * Appelé avant les actions de fin quand la règle est ramenée au repos de
+     * force — réinitialisation, désactivation : ni perdre les actions du
+     * déclenchement, ni les jouer après celles du retour au repos.
+     */
+    private static function flushDeferred($_rule, $_context) {
+        unset(self::$_states[(int) $_rule->getId()]);
+        $state = self::state($_rule->getId());
+        if (empty($state['deferred'])) {
+            return;
+        }
+        foreach ($state['deferred'] as $alertId) {
+            self::runDeferred($alertId, true, $_context);
+        }
+        $state['deferred'] = array();
+        self::saveState($_rule->getId(), $state);
+    }
+
+    /* Horloge à la microseconde, remplaçable par le jeu d'essai. */
+    public static function now() {
+        return (self::$_clock !== null) ? (float) call_user_func(self::$_clock) : microtime(true);
+    }
+
+    private static function pause($_seconds) {
+        if (self::$_sleeper !== null) {
+            call_user_func(self::$_sleeper, $_seconds);
+            return;
+        }
+        usleep((int) round($_seconds * 1000000));
     }
 
     /*
@@ -639,28 +971,50 @@ class dahuaRule {
      */
     public static function checkHold() {
         foreach (self::all() as $rule) {
-            $triggered = $rule->getCmd('info', 'triggered');
-            if (!is_object($triggered) || $triggered->execCmd() != 1) {
-                continue;
-            }
-            $state = self::state($rule->getId());
-            /*
-             * « until » vide alors que la règle est déclenchée : l'état a été
-             * perdu (cache vidé, sauvegarde restaurée, exception en plein
-             * déclenchement). On fait retomber la règle plutôt que de laisser la
-             * commande à 1 indéfiniment — c'est le rattrapage qui manquait, et
-             * c'est le mode de panne le plus dangereux pour une alarme.
-             */
-            if (!empty($state['until']) && time() < $state['until']) {
-                continue;
-            }
-            $state['until'] = 0;
-            self::saveState($rule->getId(), $state);
-            self::release($rule);
+            self::checkRule($rule);
         }
     }
 
+    private static function checkRule($_rule) {
+        $triggered = $_rule->getCmd('info', 'triggered');
+        if (!is_object($triggered) || $triggered->execCmd() != 1) {
+            return;
+        }
+        $state = self::state($_rule->getId());
+        /*
+         * Des actions « au déclenchement » attendent encore leur photo : le
+         * retour au repos attend avec elles. C'est le choix retenu quand la
+         * durée de maintien est plus courte que l'attente — « Déclenchée »
+         * reste à 1 un peu plus longtemps, mais les actions de fin (couper la
+         * sirène, notifier la fin) ne partent jamais avant celles du début.
+         * L'attente étant bornée à trente secondes, le retard l'est aussi.
+         */
+        if (self::hasDeferred($_rule, $state)) {
+            return;
+        }
+        /*
+         * « until » vide alors que la règle est déclenchée : l'état a été
+         * perdu (cache vidé, sauvegarde restaurée, exception en plein
+         * déclenchement). On fait retomber la règle plutôt que de laisser la
+         * commande à 1 indéfiniment — c'est le rattrapage qui manquait, et
+         * c'est le mode de panne le plus dangereux pour une alarme.
+         */
+        if (!empty($state['until']) && time() < $state['until']) {
+            return;
+        }
+        $state['until'] = 0;
+        self::saveState($_rule->getId(), $state);
+        self::release($_rule);
+    }
+
     public static function release($_rule) {
+        /*
+         * Retour au repos forcé (réinitialisation, désactivation de la règle)
+         * pendant une attente : les actions du déclenchement partent d'abord,
+         * sans photo, puis celles du retour. Rien n'est perdu, et l'ordre est
+         * respecté. Sur le retour normal, checkRule() a déjà vidé la liste.
+         */
+        self::flushDeferred($_rule, __('règle ramenée au repos pendant l\'attente de la capture, actions jouées sans elle', __FILE__));
         $triggered = $_rule->getCmd('info', 'triggered');
         if (!is_object($triggered) || $triggered->execCmd() != 1) {
             return;
@@ -675,7 +1029,7 @@ class dahuaRule {
          * déclenchée, les actions de fin doivent être jouées, sinon une sirène
          * allumée le resterait. */
         self::release($_rule);
-        self::saveState($_rule->getId(), array('hits' => array(), 'fired' => 0, 'until' => 0));
+        self::saveState($_rule->getId(), array('hits' => array(), 'fired' => 0, 'until' => 0, 'deferred' => array()));
         $_rule->checkAndUpdateCmd('triggered', 0);
         $_rule->checkAndUpdateCmd('detail', __('Réinitialisée', __FILE__));
         return true;
@@ -724,6 +1078,9 @@ class dahuaRule {
                 'hits'  => (isset($state['hits']) && is_array($state['hits'])) ? $state['hits'] : array(),
                 'fired' => isset($state['fired']) ? (int) $state['fired'] : 0,
                 'until' => isset($state['until']) ? (int) $state['until'] : 0,
+                /* Alertes dont les actions attendent leur capture fraîche. */
+                'deferred' => (isset($state['deferred']) && is_array($state['deferred']))
+                            ? array_values(array_filter($state['deferred'], 'is_string')) : array(),
             );
         }
         return self::$_states[$_id];

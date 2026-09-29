@@ -33,6 +33,15 @@ function dahua_update() {
     dahua_migrateRuleImages();
     dahua_migrateAlertWidget();
     dahua_migrateRuleImageFile();
+    dahua_migrateCameraSnapshotFile();
+    /*
+     * « Attendre la capture fraîche avant d'agir » (wait_live) n'a volontairement
+     * pas de migration : le moteur lit une clé absente comme 0, si bien que les
+     * règles existantes gardent exactement leur comportement — actions au
+     * déclenchement — sans qu'on réenregistre aucun équipement. Les réenregistrer
+     * ici pour y écrire 0 ferait courir à chaque mise à jour le risque de
+     * preSave() et postSave() sur toutes les règles, pour rien.
+     */
     dahua_republishAlerts();
 }
 
@@ -227,6 +236,34 @@ function dahua_migrateRuleImageFile() {
     }
     if ($complete) {
         config::save('migration::rule_image_file', 1, 'dahua');
+    }
+}
+
+/*
+ * Crée « Fichier de l'image » sur les caméras existantes : les commandes ne
+ * sont ajoutées qu'à l'enregistrement de l'équipement.
+ */
+function dahua_migrateCameraSnapshotFile() {
+    if (config::byKey('migration::camera_snapshot_file', 'dahua', 0) == 1) {
+        return;
+    }
+    $complete = true;
+    foreach (eqLogic::byType('dahua') as $eqLogic) {
+        if ($eqLogic->getConfiguration('type') != dahua::TYPE_CAMERA) {
+            continue;
+        }
+        if (is_object($eqLogic->getCmd('info', 'snapshot_file'))) {
+            continue;
+        }
+        try {
+            $eqLogic->postSave();
+        } catch (Throwable $e) {
+            $complete = false;
+            log::add('dahua', 'error', 'migration ' . $eqLogic->getName() . ' : ' . $e->getMessage());
+        }
+    }
+    if ($complete) {
+        config::save('migration::camera_snapshot_file', 1, 'dahua');
     }
 }
 

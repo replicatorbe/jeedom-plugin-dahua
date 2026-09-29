@@ -475,6 +475,15 @@ class dahua extends eqLogic {
                 $value = ($raw === '' || $raw === null) ? $default : (int) $raw;
                 $this->setConfiguration($key, max($minimums[$key], $value));
             }
+            /*
+             * Attente de la capture fraîche : désactivée tant qu'on ne l'a pas
+             * cochée, ce qui garde aux règles existantes leur comportement
+             * d'origine sans migration. Le délai est borné comme le moteur le
+             * borne (dahuaRule::waitLiveMax), pour que la page affiche la
+             * valeur réellement appliquée.
+             */
+            $this->setConfiguration('wait_live', ((int) $this->getConfiguration('wait_live', 0) == 1) ? 1 : 0);
+            $this->setConfiguration('wait_live_max', dahuaRule::waitLiveMax($this));
             $scope = $this->getConfiguration('camera_scope');
             if (!in_array($scope, array(dahuaRule::SCOPE_ANY, dahuaRule::SCOPE_SAME, dahuaRule::SCOPE_DISTINCT))) {
                 $this->setConfiguration('camera_scope', dahuaRule::SCOPE_ANY);
@@ -610,13 +619,13 @@ class dahua extends eqLogic {
         // méthode DANS LE MÊME ENREGISTREMENT — avec son historique, remove()
         // appelant emptyHistory(). Et la panne serait muette : checkAndUpdateCmd()
         // sur une commande absente retourne false sans rien journaliser.
-        $camIds = array('online', 'snapshot', 'take_snapshot', 'ptz_preset',
+        $camIds = array('online', 'snapshot', 'snapshot_file', 'take_snapshot', 'ptz_preset',
                         'light_on', 'light_off', 'siren_on', 'siren_off',
                         'lastevent', 'lastevent_date');
         foreach (self::$_channelEvents as $def) {
             $camIds[] = $def['logicalId'];
         }
-        $ruleIds = array('triggered', 'detail', 'image', 'image_file', 'images', 'rule_test', 'rule_reset');
+        $ruleIds = array('triggered', 'detail', 'image', 'image_file', 'image_url', 'images', 'rule_test', 'rule_reset');
 
         $byType = array(
             self::TYPE_NVR    => $nvrIds,
@@ -704,6 +713,17 @@ class dahua extends eqLogic {
      * de son tour, d'où deux gardes séparées.
      */
     public static function cron() {
+        /*
+         * Les actions de règle restées en attente d'une capture fraîche alors
+         * que leur échéance est passée : le processus qui devait les jouer est
+         * mort avec Jeedom (redémarrage, mise à jour). Avant checkHold(), pour
+         * que les actions de fin ne partent jamais avant celles de début.
+         */
+        try {
+            dahuaRule::recoverDeferred();
+        } catch (Throwable $e) {
+            log::add(__CLASS__, 'error', __('Rattrapage des actions différées en échec :', __FILE__) . ' ' . $e->getMessage());
+        }
         try {
             dahuaRule::checkHold();
         } catch (Throwable $e) {
@@ -814,6 +834,15 @@ class dahua extends eqLogic {
             'generic_type' => 'CAMERA_URL',
             'order'        => $order++,
         ));
+        /*
+         * La même capture, en chemin sur le disque : c'est elle qu'on joint à une
+         * notification, comme « Fichier de l'image » d'une règle. Sans elle, un
+         * scénario devait extraire le nom du fichier de l'adresse ci-dessus.
+         */
+        $this->addCmdIfMissing('snapshot_file', 'Fichier de l\'image', 'info', 'string', array(
+            'isVisible' => 0,
+            'order'     => $order++,
+        ));
         $this->addCmdIfMissing('take_snapshot', 'Capturer une image', 'action', 'other', array(
             'generic_type' => 'CAMERA_TAKE',
             'order'        => $order++,
@@ -870,6 +899,16 @@ class dahua extends eqLogic {
          * pour reconstituer le chemin à la main dans le scénario.
          */
         $this->addCmdIfMissing('image_file', 'Fichier de l\'image', 'info', 'string', array(
+            'isVisible' => 0,
+            'order'     => $order++,
+        ));
+        /*
+         * La même image, en adresse complète sur le réseau local. Elle se lit
+         * avec la clé d'accès aux images (configuration du plugin) en
+         * authentification HTTP Basic : c'est ce que fait le widget caméra de
+         * JeedomConnect, qui charge l'image côté serveur et n'a pas de session.
+         */
+        $this->addCmdIfMissing('image_url', 'Adresse de l\'image (accès par clé)', 'info', 'string', array(
             'isVisible' => 0,
             'order'     => $order++,
         ));
@@ -1240,6 +1279,15 @@ class dahua extends eqLogic {
         if ($this->getConfiguration('type') != self::TYPE_CAMERA) {
             throw new Exception(__('La capture ne s\'applique qu\'à une caméra.', __FILE__));
         }
+        try {
+            return $this->captureSnapshot();
+        } catch (Exception $e) {
+            $this->publishUnavailableSnapshot();
+            throw $e;
+        }
+    }
+
+    private function captureSnapshot() {
         $nvr = $this->getNvr();
         if (!is_object($nvr)) {
             throw new Exception(__('NVR parent introuvable : rattachez la caméra à un NVR.', __FILE__));
@@ -1269,8 +1317,106 @@ class dahua extends eqLogic {
         $this->purgeSnapshots($dir);
 
         $url = 'plugins/dahua/core/php/snapshot.php?file=' . rawurlencode($file);
+        /* Le fichier avant l'adresse : un scénario déclenché par « Dernière
+         * image » trouve déjà le chemin de la même capture. */
+        $this->checkAndUpdateCmd('snapshot_file', realpath($dir . '/' . $file));
         $this->checkAndUpdateCmd('snapshot', $url);
         return $url;
+    }
+
+    /*
+     * Une capture ratée remplace la dernière image par une image « indisponible »
+     * horodatée. Garder l'ancienne serait pire : une notification qui joint
+     * « Fichier de l'image » juste après « Capturer une image » enverrait une
+     * vieille photo comme si elle venait d'être prise — par exemple une rue vide
+     * au moment où quelqu'un sonne. Un échec ici ne doit jamais masquer
+     * l'exception d'origine : il est seulement journalisé.
+     */
+    private function publishUnavailableSnapshot() {
+        try {
+            if (!function_exists('imagecreatetruecolor')) {
+                log::add(__CLASS__, 'warning', $this->getHumanName() . ' '
+                       . __('extension GD absente : pas d\'image « indisponible » après l\'échec de la capture', __FILE__));
+                return;
+            }
+            $dir = self::snapshotDir();
+            if ($dir === false) {
+                return;
+            }
+            $width = 640;
+            $height = 360;
+            $img = imagecreatetruecolor($width, $height);
+            imagefill($img, 0, 0, imagecolorallocate($img, 45, 45, 45));
+            $white = imagecolorallocate($img, 255, 255, 255);
+            $orange = imagecolorallocate($img, 255, 167, 38);
+            $lines = array(
+                array($this->getName(), 30, $white),
+                array(__('Image indisponible', __FILE__), 24, $orange),
+                array(date('d/m/Y H:i:s'), 18, $white),
+            );
+            $font = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';
+            if (function_exists('imagettftext') && is_file($font)) {
+                $y = 130;
+                foreach ($lines as $line) {
+                    $box = imagettfbbox($line[1], 0, $font, $line[0]);
+                    imagettftext($img, $line[1], 0, (int) (($width - ($box[2] - $box[0])) / 2), $y, $line[2], $font, $line[0]);
+                    $y += 70;
+                }
+            } else {
+                /* Police intégrée de GD : ASCII seulement, les accents sont retirés. */
+                $y = 140;
+                foreach ($lines as $line) {
+                    $text = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $line[0]);
+                    imagestring($img, 5, (int) (($width - imagefontwidth(5) * strlen($text)) / 2), $y, $text, $line[2]);
+                    $y += 30;
+                }
+            }
+            $file = 'cam' . $this->getId() . '_' . gmdate('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
+            $written = imagejpeg($img, $dir . '/' . $file, 85);
+            imagedestroy($img);
+            if (!$written) {
+                log::add(__CLASS__, 'warning', $this->getHumanName() . ' '
+                       . __('écriture de l\'image « indisponible » impossible dans', __FILE__) . ' ' . $dir);
+                return;
+            }
+            $this->purgeSnapshots($dir);
+            $this->checkAndUpdateCmd('snapshot_file', realpath($dir . '/' . $file));
+            $this->checkAndUpdateCmd('snapshot', 'plugins/dahua/core/php/snapshot.php?file=' . rawurlencode($file));
+        } catch (Throwable $e) {
+            log::add(__CLASS__, 'warning', $this->getHumanName() . ' '
+                   . __('image « indisponible » non publiée :', __FILE__) . ' ' . $e->getMessage());
+        }
+    }
+
+    /*
+     * Clé d'accès aux images, générée au premier besoin. Distincte de la clé
+     * API du plugin, et c'est voulu : celle-ci ouvre le callback du démon, qui
+     * livre le mot de passe du NVR. La clé d'images ne donne que des images —
+     * on peut la confier à une application sans lui confier le NVR.
+     */
+    public static function imageKey() {
+        $key = config::byKey('image_key', __CLASS__, '');
+        if ($key == '') {
+            $key = config::genKey(32);
+            config::save('image_key', $key, __CLASS__);
+        }
+        return $key;
+    }
+
+    /* Vrai si la requête présente la clé d'images en HTTP Basic (le nom
+     * d'utilisateur est libre). */
+    public static function checkImageKey() {
+        $password = isset($_SERVER['PHP_AUTH_PW']) ? $_SERVER['PHP_AUTH_PW'] : null;
+        if ($password === null && isset($_SERVER['HTTP_AUTHORIZATION'])
+            && stripos($_SERVER['HTTP_AUTHORIZATION'], 'Basic ') === 0) {
+            /* Sous PHP-FPM, Apache ne remplit pas PHP_AUTH_PW : on relit l'en-tête. */
+            $decoded = base64_decode(substr($_SERVER['HTTP_AUTHORIZATION'], 6), true);
+            if (is_string($decoded) && strpos($decoded, ':') !== false) {
+                $password = substr($decoded, strpos($decoded, ':') + 1);
+            }
+        }
+        $key = config::byKey('image_key', __CLASS__, '');
+        return is_string($password) && $key != '' && hash_equals($key, $password);
     }
 
     public static function snapshotDir() {

@@ -266,6 +266,25 @@ function handleDahuaEvent($_event) {
         dahuaAlert::noteCapture($alertId, $cameraId, $ok, $error);
 
         /*
+         * Des actions de règle attendaient peut-être cette capture (option
+         * « Attendre la capture fraîche avant d'agir »). APRÈS noteCapture(),
+         * et ce n'est pas un détail : c'est elle qui republie « Fichier de
+         * l'image », sous le verrou de l'alerte, et le jeton des actions se
+         * prend sous ce même verrou — une notification partie d'ici joint
+         * donc forcément la nouvelle photo. Un échec, lui, lève aussi
+         * l'attente quand c'était la dernière capture espérée.
+         *
+         * Sans danger si le démon rejoue ce compte rendu : le jeton déjà pris,
+         * rien n'est rejoué.
+         */
+        try {
+            dahuaRule::onLiveShot($alertId);
+        } catch (Throwable $e) {
+            /* Le processus d'attente et le cron prendront le relais. */
+            log::add('dahua', 'error', __('Actions différées en échec :', __FILE__) . ' ' . $e->getMessage());
+        }
+
+        /*
          * La tuile est republiée par noteCapture() elle-même, sous le verrou de
          * l'alerte. Le faire ici serait une course perdue d'avance : chaque
          * caméra poste son compte rendu depuis un fils distinct, donc dans une

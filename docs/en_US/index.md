@@ -109,8 +109,14 @@ select the NVR and enter the channel number as the NVR displays it (`D1` → 1,
 | Last event | string | code and action of the last event received |
 | Last event date | string | timestamp of that last event |
 | Last snapshot | string | address of the latest snapshot |
+| Image file | string | the same snapshot, as a path on disk: attach it to a notification |
 | Take a snapshot | action | triggers an immediate capture |
 | Go to preset | action | recalls a PTZ preset |
+
+When a snapshot fails (camera offline, NVR unreachable), *Last snapshot* and
+*Image file* switch to a timestamped "Image unavailable" picture carrying the
+camera name. A notification attaching the snapshot therefore never shows an old
+picture as if it had just been taken.
 
 Binary commands go to `1` when the event starts and back to `0` when it ends.
 Events whose end the NVR never announces fall back automatically after the delay
@@ -280,6 +286,11 @@ Jeedom session: an external service will not be able to load it. Attach the
 file rather than the link: the *Image file* command of each rule gives its path
 on disk directly, to put in the attachment field of your notification plugin.
 
+If that notification is an **action of the rule**, tick *Wait for the fresh
+snapshot before acting* (see [Actions](#actions)): otherwise it runs at trigger
+time, before the fresh snapshot arrives, and may go without a picture when the
+image from detection time is missing.
+
 ## PTZ
 
 The **Go to preset** command recalls a preset stored in the NVR. With no value,
@@ -438,6 +449,63 @@ row disable the action or run it in the background.
 Both blocks are optional. The *Triggered* command changes state in any case: if
 you prefer a scenario, simply trigger it on that command.
 
+#### Wait for the fresh snapshot before acting
+
+At trigger time, the image from detection time may be missing — the *Test*
+button, or a latest camera snapshot too old to match — and the fresh snapshot
+only arrives a second or two later. A notification set as an action, for
+instance `title=Outdoor intrusion | files=#[Outside][Intrusion][Image file]#`,
+would then go without a picture.
+
+Tick **Wait for the fresh snapshot before acting** to hold back the *Actions on
+trigger*:
+
+- they run **as soon as the first fresh snapshot of the alert is saved** — it
+  is then the best image of the alert, the one *Image file*, *Trigger image*
+  and *Image address* point to, already up to date when the actions run.
+  Waiting for the other cameras would delay the alarm by the slowest one, for a
+  notification that attaches a single image;
+- or as soon as **all requested snapshots have failed**: nothing is left to
+  wait for;
+- and **at the latest after the maximum delay** (10 s by default, 1 to 30 s):
+  if the picture is still not there, they run anyway, without it. A dead camera
+  must never silence the alarm.
+
+The `dahua` log tells which of these happened and the actual delay, for
+instance "actions run after 1.2 s: fresh snapshot saved" or "actions run after
+10.0 s: maximum delay reached without a fresh snapshot, actions run without a
+picture".
+
+What does not change:
+
+- *Triggered* goes to 1 **immediately**; only the actions are held back. A
+  scenario triggered on *Triggered* therefore does not wait: it has to wait by
+  itself if it attaches the image;
+- the cooldown, the arming condition and the *Test* button behave as before —
+  *Test* waits for the snapshot too;
+- the actions run **only once** per trigger, even if the snapshot arrives right
+  at the deadline.
+
+**Hold time shorter than the wait**: the return to idle waits until the trigger
+actions have run. *Triggered* then stays at 1 a little longer, but the *Actions
+on release* never run before the trigger ones. Resetting or disabling the rule
+during the wait immediately runs the pending actions, without a picture, then
+the release ones.
+
+**Jeedom restarting during the wait**: the wait is recorded in the alert folder,
+on disk. If the process watching it disappears, the actions are recovered on the
+next detection or, at the latest, by the plugin's one-minute cron. Found more
+than an hour after their deadline, they are no longer run — a siren or an
+"Intrusion" notification that late would do more harm than good — and a message
+says so in the message center.
+
+If *Take a fresh snapshot on every alert* is unticked in the plugin
+configuration, or if the daemon is stopped, no snapshot is on its way: the
+actions run immediately, as without the option. The rule page says so.
+
+The option is unticked by default, including on existing rules, which keep
+their behavior.
+
 ### Commands created
 
 | Command | Type | Purpose |
@@ -446,6 +514,7 @@ you prefer a scenario, simply trigger it on that command.
 | Trigger detail | info / string | "NORTH Line crossed 12:00:03 + NORTH Motion 12:00:05" |
 | Trigger image | info / string | Address of the best image of the last alert — the fresh snapshot if it arrived, otherwise the one at detection. Emptied when the alert has no image, rather than leaving the one from the previous trigger. |
 | Image file | info / string | The same image, as a path on the Jeedom disk: this is the one to attach to a notification. Emptied in the same cases. Hidden by default. |
+| Image address (key access) | info / string | The same image, as a full address on the local network, readable without a session using the *image access key* (plugin configuration) as HTTP Basic authentication. Emptied in the same cases. Hidden by default. |
 | Alert images | info / string | All the images of the last alert, with the name of each camera. This is the command that carries the dashboard tile. |
 | Test | action | Plays the trigger for real, actions included. Hidden by default: it runs every action of the rule, including on equipment the dashboard user may have no rights on. |
 | Reset | action | Returns the rule to idle, plays the release actions and forgets pending detections |
@@ -456,8 +525,15 @@ page, next to the current state and the last trigger.
 To send a photo in a notification, use *Image file*: the address of *Trigger
 image* requires a Jeedom session, which an external service does not have. When
 *Triggered* goes to 1, the command points at the image from detection time; the
-fresh snapshot replaces it a few seconds later. To attach that one, make the
-scenario wait about ten seconds before reading the command.
+fresh snapshot replaces it a few seconds later. To attach that one from an
+action of the rule, tick *Wait for the fresh snapshot before acting*; from a
+scenario, make it wait about ten seconds before reading the command.
+
+To show the latest image of a rule in **JeedomConnect**, create a *Camera*
+widget: *Snapshot URL command* = *Image address (key access)*, *Snapshot
+authentication* = Basic, any user name and, as password, the *image access key*
+shown in the plugin configuration. The widget loads the image server-side; the
+key only grants access to images, never to the NVR.
 
 ### Good to know
 

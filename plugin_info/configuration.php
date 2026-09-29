@@ -112,5 +112,14 @@ if (!isConnect('admin')) {
 				<span class="help-block" style="margin:0;">{{Toute alerte plus récente que ce nombre de jours garde sa pleine résolution, quel que soit son rang : une règle bavarde ne peut plus priver d'agrandissement les alertes de la veille. 0 désactive cette garantie, seul le rang compte alors. 3 par défaut. Sans effet si le réglage précédent vaut 0. Le nombre total d'alertes conservées borne toujours la place occupée.}}</span>
 			</div>
 		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Clé d'accès aux images}}</label>
+			<div class="col-md-4">
+				<input class="form-control" readonly value="<?php echo htmlspecialchars(dahua::imageKey(), ENT_QUOTES); ?>">
+			</div>
+			<div class="col-md-4">
+				<span class="help-block" style="margin:0;">{{Mot de passe en authentification HTTP Basic (utilisateur libre) pour lire la commande « Adresse de l'image (accès par clé) » sans session Jeedom, par exemple depuis le widget caméra de JeedomConnect. Ne donne accès qu'aux images.}}</span>
+			</div>
+		</div>
 	</fieldset>
 </form>

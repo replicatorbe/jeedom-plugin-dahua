@@ -37,9 +37,22 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 require_once __DIR__ . '/../class/dahua.class.php';
 include_file('core', 'authentification', 'php');
 
+/*
+ * Sans session, la clé d'accès aux images est acceptée en authentification
+ * HTTP Basic. C'est ce qui permet à un service tournant sur Jeedom lui-même —
+ * le passe-plat du widget caméra de JeedomConnect, par exemple — de lire une
+ * image d'alerte : il n'a pas de session, et n'a pas à en avoir. La clé ne
+ * voyage jamais dans l'adresse, qui reste donc sans secret dans l'historique
+ * des commandes.
+ */
+$byKey = false;
 if (!isConnect()) {
-    header('HTTP/1.0 401 Unauthorized');
-    die('401 - Unauthorized');
+    $byKey = dahua::checkImageKey();
+    if (!$byKey) {
+        header('WWW-Authenticate: Basic realm="dahua"');
+        header('HTTP/1.0 401 Unauthorized');
+        die('401 - Unauthorized');
+    }
 }
 
 $file  = init('file');
@@ -86,7 +99,9 @@ if ($alert != '') {
      */
     $meta = dahuaAlert::readMeta($alert);
     $rule = is_array($meta) ? dahuaAlert::ruleOf($meta) : null;
-    if (!is_object($rule) || !$rule->hasRight('r')) {
+    /* La clé ne porte aucun utilisateur : elle vaut droit de lecture sur toutes
+     * les images, c'est le sens même de sa configuration. */
+    if (!is_object($rule) || (!$byKey && !$rule->hasRight('r'))) {
         header('HTTP/1.0 403 Forbidden');
         die('403 - Forbidden');
     }

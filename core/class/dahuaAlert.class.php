@@ -879,6 +879,211 @@ class dahuaAlert {
         }, self::publisher($_id));
     }
 
+    /* ==================================================== ACTIONS DIFFÉRÉES */
+
+    /*
+     * Une règle peut retenir ses actions « au déclenchement » jusqu'à l'arrivée
+     * de la capture fraîche (option « Attendre la capture fraîche avant
+     * d'agir »). Le cas qui l'a imposée : une notification qui joint « Fichier
+     * de l'image » partait AVANT toute image — la capture de détection était
+     * trop ancienne ou absente (bouton « Tester »), et la capture fraîche
+     * arrivait une seconde trop tard.
+     *
+     * L'attente est inscrite ICI, dans la description de l'alerte, et non dans
+     * le cache ou dans une variable : c'est le seul état qui soit à la fois
+     *   - sur le disque, donc survivant à un redémarrage de Jeedom ou d'Apache ;
+     *   - protégé par le verrou de l'alerte, celui-là même sous lequel
+     *     noteCapture() inscrit la capture ET republie les commandes d'image.
+     * Ce second point fait tout : prendre le jeton sous ce verrou garantit que
+     * « Fichier de l'image » est déjà à jour quand les actions partent, et
+     * qu'un seul des candidats (l'événement de capture, le processus de
+     * secours, le cron) peut le prendre. Exactement une exécution.
+     *
+     * Forme dans meta.json :
+     *   actions: {state: pending|done, since, deadline, rule_id,
+     *             done_at, reason}
+     * since et deadline sont des horodatages à la microseconde : le délai réel
+     * est journalisé, et « 1,0 s » ou « 10,0 s » ne se distinguent pas à la
+     * seconde près d'un arrondi malheureux.
+     */
+    const ACTIONS_PENDING = 'pending';
+    const ACTIONS_DONE    = 'done';
+
+    /*
+     * Où en sont les captures fraîches de l'alerte :
+     *   'live'     — au moins une capture fraîche est inscrite. C'est le
+     *                signal attendu : publish() préfère toute capture fraîche à
+     *                toute image de détection, la meilleure image publiée est
+     *                donc déjà une photo de l'instant de l'alerte. Attendre les
+     *                autres caméras retarderait l'alarme du temps de la plus
+     *                lente — jusqu'à dix secondes pour une caméra tombée, qui
+     *                ne répondra jamais — pour une notification qui ne joint de
+     *                toute façon qu'une image ;
+     *   'returned' — toutes les captures demandées sont revenues, toutes en
+     *                échec : plus rien à attendre, autant partir tout de suite ;
+     *   'none'     — aucune capture n'a été demandée (réglage décoché, démon
+     *                injoignable) : il n'y a jamais rien eu à attendre ;
+     *   ''         — des captures sont encore en route.
+     */
+    public static function liveReadiness($_meta) {
+        $requested = 0;
+        $returned  = 0;
+        foreach (isset($_meta['cameras']) && is_array($_meta['cameras']) ? $_meta['cameras'] : array() as $camera) {
+            if (isset($camera[self::KIND_LIVE]) && $camera[self::KIND_LIVE] != '') {
+                return 'live';
+            }
+            if (empty($camera['live_requested'])) {
+                continue;
+            }
+            $requested++;
+            if (isset($camera['live_error'])) {
+                $returned++;
+            }
+        }
+        if ($requested == 0) {
+            return 'none';
+        }
+        return ($returned >= $requested) ? 'returned' : '';
+    }
+
+    /*
+     * Inscrit l'attente des actions de la règle, sous le verrou de l'alerte.
+     *
+     * Retourne 'pending' si l'attente est posée. Sinon, la raison de ne pas
+     * attendre : l'état de liveReadiness() quand la capture est déjà là (elle
+     * peut arriver entre l'ordre de capture et cet appel : c'est ici, sous le
+     * verrou, que la course est tranchée), ou '' si la description est
+     * illisible. Dans tous ces cas l'appelant joue les actions tout de suite :
+     * une attente qu'on ne sait pas inscrire serait une attente que rien ne
+     * viendrait jamais lever.
+     */
+    public static function deferActions($_id, $_ruleId, $_since, $_deadline) {
+        $outcome = '';
+        self::updateMeta($_id, function ($_meta) use (&$outcome, $_ruleId, $_since, $_deadline) {
+            $ready = self::liveReadiness($_meta);
+            if ($ready !== '') {
+                $outcome = $ready;
+                return null;                      // rien à écrire
+            }
+            $_meta['actions'] = array(
+                'state'    => self::ACTIONS_PENDING,
+                'rule_id'  => (int) $_ruleId,
+                'since'    => (float) $_since,
+                'deadline' => (float) $_deadline,
+            );
+            $outcome = self::ACTIONS_PENDING;
+            return $_meta;
+        });
+        /* updateMeta() rend null quand l'écriture a échoué : l'attente n'est
+         * alors pas inscrite, et la déclarer posée la rendrait éternelle. */
+        if ($outcome === self::ACTIONS_PENDING) {
+            $meta = self::readMeta($_id);
+            if (!isset($meta['actions']['state']) || $meta['actions']['state'] !== self::ACTIONS_PENDING) {
+                return '';
+            }
+        }
+        return $outcome;
+    }
+
+    /*
+     * L'attente en cours d'une alerte, ou null s'il n'y en a pas (ou plus).
+     * Lecture sans verrou, réservée à la surveillance : la décision, elle, se
+     * prend toujours dans claimActions(), sous le verrou.
+     */
+    public static function pendingActions($_id) {
+        $meta = self::readMeta($_id);
+        if (!isset($meta['actions']['state']) || $meta['actions']['state'] !== self::ACTIONS_PENDING) {
+            return null;
+        }
+        return array(
+            'rule_id'  => isset($meta['actions']['rule_id']) ? (int) $meta['actions']['rule_id'] : 0,
+            'since'    => isset($meta['actions']['since']) ? (float) $meta['actions']['since'] : 0.0,
+            'deadline' => isset($meta['actions']['deadline']) ? (float) $meta['actions']['deadline'] : 0.0,
+            'ready'    => self::liveReadiness($meta),
+        );
+    }
+
+    /*
+     * Prend le jeton d'exécution des actions en attente. Un seul appelant
+     * l'obtient, quel que soit le nombre de candidats simultanés : tout se
+     * passe sous le verrou exclusif de l'alerte, et le jeton pris est écrit
+     * avant que le verrou ne soit rendu.
+     *
+     * Sans $_force, le jeton n'est donné que si la capture est là ou si
+     * l'échéance est passée ; avec $_force (réinitialisation, désactivation de
+     * la règle, rattrapage), il est donné dans tous les cas.
+     *
+     * Retourne null, ou {rule_id, since, deadline, reason} avec pour raison
+     * 'live' / 'returned' / 'none' (la capture est là, ou plus rien à
+     * attendre), 'timeout' (échéance atteinte sans capture) ou 'forced'.
+     */
+    public static function claimActions($_id, $_force, $_now) {
+        $claim = null;
+        $written = self::updateMeta($_id, function ($_meta) use (&$claim, $_force, $_now) {
+            if (!isset($_meta['actions']['state']) || $_meta['actions']['state'] !== self::ACTIONS_PENDING) {
+                return null;                      // déjà joué, ou jamais différé
+            }
+            $deadline = isset($_meta['actions']['deadline']) ? (float) $_meta['actions']['deadline'] : 0.0;
+            $ready = self::liveReadiness($_meta);
+            if ($ready !== '') {
+                $reason = $ready;
+            } elseif ($_now >= $deadline) {
+                $reason = 'timeout';
+            } elseif ($_force) {
+                $reason = 'forced';
+            } else {
+                return null;                      // ni capture, ni échéance
+            }
+            $_meta['actions']['state']   = self::ACTIONS_DONE;
+            $_meta['actions']['done_at'] = (float) $_now;
+            $_meta['actions']['reason']  = $reason;
+            $claim = array(
+                'rule_id'  => isset($_meta['actions']['rule_id']) ? (int) $_meta['actions']['rule_id']
+                                                                   : (int) $_meta['rule_id'],
+                'since'    => isset($_meta['actions']['since']) ? (float) $_meta['actions']['since'] : (float) $_now,
+                'deadline' => $deadline,
+                'reason'   => $reason,
+            );
+            return $_meta;
+        });
+        /*
+         * Jeton pris en mémoire mais pas écrit : on ne joue rien. Jouer ici
+         * laisserait l'attente « pending » sur le disque, et le prochain
+         * candidat jouerait les actions une seconde fois. Le rattrapage réessaiera.
+         */
+        if ($claim !== null && $written === null) {
+            log::add('dahua', 'error', __('Actions différées non jouées : description d\'alerte non enregistrée', __FILE__)
+                   . ' ' . $_id);
+            return null;
+        }
+        return $claim;
+    }
+
+    /*
+     * Les alertes récentes dont les actions attendent encore, pour le
+     * rattrapage du cron. Seuls les dossiers postérieurs à $_since sont lus :
+     * leur date est dans leur nom, inutile d'ouvrir les centaines d'autres.
+     * Rend {identifiant => échéance}.
+     */
+    public static function pendingSince($_since) {
+        $base = self::baseDir();
+        if ($base === false) {
+            return array();
+        }
+        $pending = array();
+        foreach (self::listDirs($base) as $id) {
+            if (self::timeOf($id) < (int) $_since) {
+                continue;
+            }
+            $info = self::pendingActions($id);
+            if ($info !== null) {
+                $pending[$id] = $info['deadline'];
+            }
+        }
+        ksort($pending);                          // la plus ancienne d'abord
+        return $pending;
+    }
+
     /* =============================================================== WIDGET */
 
     /*
@@ -1009,6 +1214,10 @@ class dahuaAlert {
         /* Même règle : écrite même vide, pour ne jamais joindre à une
          * notification le fichier du déclenchement précédent. */
         $_rule->checkAndUpdateCmd('image_file', $bestFile);
+        /* Même image en adresse complète, lisible avec la clé d'images. Bâtie
+         * sur le fichier retenu ci-dessus — pleine résolution ou vignette —
+         * pour ne jamais désigner une image purgée. */
+        $_rule->checkAndUpdateCmd('image_url', ($bestFile != '') ? self::localUrl($_id, basename($bestFile)) : '');
         return true;
     }
 
@@ -1037,6 +1246,17 @@ class dahuaAlert {
     public static function url($_id, $_file) {
         return 'plugins/dahua/core/php/snapshot.php?alert=' . rawurlencode($_id)
              . '&file=' . rawurlencode($_file);
+    }
+
+    /* Adresse complète sur le réseau local, pour un client sans session qui
+     * présente la clé d'images. L'accès interne configuré dans Jeedom, à défaut
+     * la boucle locale : le client visé tourne sur Jeedom lui-même. */
+    public static function localUrl($_id, $_file) {
+        $base = rtrim((string) network::getNetworkAccess('internal'), '/');
+        if ($base == '') {
+            $base = 'http://127.0.0.1';
+        }
+        return $base . '/' . self::url($_id, $_file);
     }
 
     /* ============================================================== LECTURE */

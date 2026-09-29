@@ -661,7 +661,7 @@ function printEqLogic(_eqLogic) {
 
   /* Les valeurs par défaut sont appliquées par preSave() côté serveur, mais un
      champ vide ne dit pas laquelle : on les affiche. */
-  var defaults = { window: '15', cooldown: '30', hold: '10', threshold: '2' }
+  var defaults = { window: '15', cooldown: '30', hold: '10', threshold: '2', wait_live_max: '10' }
   for (var key in defaults) {
     var field = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="' + key + '"]')
     if (field !== null && field.value === '') {

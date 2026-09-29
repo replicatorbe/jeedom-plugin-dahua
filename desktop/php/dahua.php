@@ -478,6 +478,32 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 								<span class="help-block" style="margin:5px 0 0 0;">{{La commande « Déclenchée » change d'état dans tous les cas : ces actions ne sont utiles que si vous voulez éviter d'écrire un scénario.}}</span>
 							</div>
 						</div>
+						<?php
+						/* Sans capture fraîche, il n'y a rien à attendre : le moteur
+						   joue alors les actions tout de suite, et la page doit le
+						   dire plutôt que de laisser croire l'option active. */
+						$dahuaAlertShot = ((int) config::byKey('alert_shot', 'dahua', 1) == 1);
+						?>
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Attendre la capture fraîche avant d'agir}}
+								<sup><i class="fas fa-question-circle tooltips" title="{{Les actions ci-dessus partent dès que la capture fraîche de l'alerte est enregistrée, pour qu'une notification qui joint « Fichier de l'image » ait sa photo. Si elle n'est pas arrivée après le délai maximal, elles partent quand même, sans photo. « Déclenchée » passe à 1 immédiatement dans tous les cas.}}"></i></sup>
+							</label>
+							<div class="col-sm-1">
+								<input type="checkbox" class="eqLogicAttr" data-l1key="configuration" data-l2key="wait_live">
+							</div>
+							<label class="col-sm-2 control-label">{{Délai maximal}}
+								<sup><i class="fas fa-question-circle tooltips" title="{{Secondes, de 1 à 30 ; 10 par défaut. Au-delà, les actions partent sans photo.}}"></i></sup>
+							</label>
+							<div class="col-sm-1">
+								<input type="number" min="1" max="30" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="wait_live_max" placeholder="10">
+							</div>
+							<div class="col-sm-5">
+								<span class="help-block" style="margin:0;">{{Les actions partent dès la première capture fraîche enregistrée, ou quand toutes les captures demandées ont échoué, et au plus tard après le délai maximal. Le bouton « Tester » attend de la même façon. Si la durée de maintien est plus courte, le retour au repos attend que ces actions soient parties.}}</span>
+								<?php if (!$dahuaAlertShot) { ?>
+								<span class="help-block text-warning" style="margin:5px 0 0 0;"><i class="fas fa-exclamation-triangle"></i> {{« Capturer une image fraîche à chaque alerte » est décoché dans la configuration du plugin : il n'y a rien à attendre, les actions partent immédiatement.}}</span>
+								<?php } ?>
+							</div>
+						</div>
 
 						<legend><i class="fas fa-undo"></i> {{Actions au retour au repos}}</legend>
 						<div class="form-group">

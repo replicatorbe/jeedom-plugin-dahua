@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8 — 29/09/2026
+
+**Attendre la photo avant de notifier**
+
+- Nouvelle option de règle **Attendre la capture fraîche avant d'agir**, avec un
+  **délai maximal** (10 s par défaut, de 1 à 30 s). Une notification configurée
+  en action, qui joint *Fichier de l'image*, partait au déclenchement — avant
+  la capture fraîche — et donc sans photo quand l'image du moment de la
+  détection manquait : bouton *Tester*, ou dernière capture trop ancienne.
+- Les actions au déclenchement partent dès la première capture fraîche
+  enregistrée, ou quand toutes ont échoué, et au plus tard au bout du délai
+  maximal, sans photo s'il le faut. Le journal indique lequel des cas s'est
+  produit et le délai réel. *Déclenchée* passe toujours à 1 immédiatement.
+- Les actions ne sont jouées qu'une fois par déclenchement, et jamais perdues :
+  l'attente est inscrite dans le dossier de l'alerte et rattrapée après un
+  redémarrage de Jeedom (jusqu'à une heure après l'échéance). Les actions de
+  retour au repos ne partent jamais avant elles.
+- Décochée par défaut : les règles existantes gardent leur comportement.
+
 ## 0.7 — 23/09/2026
 
 **Joindre l'image d'une alerte à une notification**
