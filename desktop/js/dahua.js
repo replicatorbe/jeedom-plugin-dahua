@@ -661,7 +661,7 @@ function printEqLogic(_eqLogic) {
 
   /* Les valeurs par défaut sont appliquées par preSave() côté serveur, mais un
      champ vide ne dit pas laquelle : on les affiche. */
-  var defaults = { window: '15', cooldown: '30', hold: '10', threshold: '2', wait_live_max: '10' }
+  var defaults = { window: '15', cooldown: '30', hold: '10', threshold: '2', wait_live_max: '10', confirm_delay: '0' }
   for (var key in defaults) {
     var field = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="' + key + '"]')
     if (field !== null && field.value === '') {
@@ -1046,8 +1046,12 @@ dahuaContainer.addEventListener('click', function (event) {
       return
     }
     dahuaAjax('testRule', { id: ruleId }, function (result) {
+      var confirm = parseInt(init(result.confirm, 0), 10)
+      var intro = (confirm > 0)
+        ? '{{Règle déclenchée, les actions partiront dans}} ' + confirm + ' s {{si la condition d\'armement est toujours remplie}}'
+        : '{{Règle déclenchée, les actions ont été jouées}}'
       jeedomUtils.showAlert({
-        message: '{{Règle déclenchée, les actions ont été jouées}} : ' + init(result.detail, ''),
+        message: intro + ' : ' + init(result.detail, ''),
         level: 'success',
         timeOut: 8000
       })

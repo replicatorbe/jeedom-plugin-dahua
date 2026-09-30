@@ -1,6 +1,7 @@
 <?php
-/* Jeu d'essai hors ligne des actions différées d'une règle (option « Attendre
- * la capture fraîche avant d'agir »).
+/* Jeu d'essai hors ligne des actions différées d'une règle (options « Attendre
+ * la capture fraîche avant d'agir » et « Délai de confirmation »), et de la
+ * purge par âge des dossiers d'alerte et des captures.
  *
  *   php tests/test_deferred_actions.php
  *
@@ -73,6 +74,28 @@ class config {
     public static function byKey($_key, $_plugin = 'core', $_default = '') {
         return array_key_exists($_key, self::$values) ? self::$values[$_key] : $_default;
     }
+}
+
+/* La condition d'armement : le coeur la résout puis l'évalue. Ici, une
+ * expression « ARMED » vaut ce que dit $armed, que l'essai bascule à volonté —
+ * c'est la présence qui reconnaît les occupants pendant le délai. */
+$armed = true;
+class cmd {
+    public static function humanReadableToCmd($_input) {
+        return $_input;
+    }
+    public static function cmdToValue($_input, $_quote = false) {
+        return $_input;
+    }
+}
+class scenarioExpression {
+    public static function setTags($_expression, &$_scenario = null, $_quote = false) {
+        return $_expression;
+    }
+}
+function evaluate($_expression) {
+    global $armed;
+    return ($_expression === 'ARMED') ? $armed : $_expression;
 }
 
 /* Le processus de secours n'est pas lancé : on note seulement qu'il l'aurait
@@ -517,6 +540,199 @@ try {
     $refused = (strpos($e->getMessage(), 'temporisation') !== false);
 }
 verifie('second test refusé par la temporisation', $refused, true);
+
+echo "\n== Délai de confirmation : condition toujours vraie ==\n";
+$now = 50000.0;
+$armed = true;
+$rule = rule(30, array('wait_live' => 1, 'wait_live_max' => 10, 'confirm_delay' => 30,
+                       'arm_condition' => 'ARMED', 'cooldown' => 300, 'hold' => 10));
+dahuaRule::test($rule);
+$alert = alertOf($rule);
+verifie('dossier d\'alerte ouvert tout de suite', $alert != '', true);
+verifie('« Déclenchée » reste à 0 pendant le délai', $rule->value('triggered'), '');
+verifie('aucune action au déclenchement', count(played(30)), 0);
+verifie('journal : actions différées de 30 s', log::has('actions différées de 30 s'), true);
+$now = 50001.0;
+captureArrives($alert);
+verifie('la photo arrivée ne fait rien partir', count(played(30)), 0);
+dahuaRule::watch($alert);
+verifie('actions jouées une fois', count(played(30, 'actions')), 1);
+verifie('au terme du délai (30 s)', played(30, 'actions')[0]['at'], 50030.0);
+verifie('avec la photo', played(30, 'actions')[0]['file'], dahuaAlert::path($alert) . '/cam10_live.jpg');
+verifie('« Déclenchée » passe à 1 à la confirmation', $rule->value('triggered'), 1);
+verifie('journal : confirmée', log::has('confirmée après 30,0 s'), true);
+clearStates();
+dahuaRule::checkHold();
+verifie('maintien compté depuis la confirmation : pas de retour immédiat', count(played(30, 'actions_end')), 0);
+$refused = false;
+try {
+    dahuaRule::test($rule);
+} catch (Exception $e) {
+    $refused = (strpos($e->getMessage(), 'temporisation') !== false);
+}
+verifie('temporisation consommée', $refused, true);
+
+echo "\n== Délai de confirmation : condition retombée (retour des occupants) ==\n";
+$now = 51000.0;
+$armed = true;
+$calls = count(system::$calls);
+$rule = rule(31, array('wait_live' => 1, 'wait_live_max' => 10, 'confirm_delay' => 30,
+                       'arm_condition' => 'ARMED', 'cooldown' => 300));
+dahuaRule::test($rule);
+$alert = alertOf($rule);
+verifie('processus de secours lancé', count(system::$calls), $calls + 1);
+$now = 51001.0;
+captureArrives($alert);
+$armed = false;                                   // la présence reconnaît les occupants
+dahuaRule::watch($alert);
+verifie('aucune action jouée', count(played(31)), 0);
+verifie('« Déclenchée » jamais passée à 1', $rule->value('triggered'), '');
+verifie('journal : annulée', log::has('annulée après 30,0 s : condition d\'armement retombée pendant le délai de confirmation'), true);
+$meta = dahuaAlert::readMeta($alert);
+verifie('le dossier d\'alerte reste', is_array($meta), true);
+verifie('marqué annulé', $meta['cancelled'], 'condition d\'armement retombée pendant le délai de confirmation');
+verifie('« Détail » dit l\'annulation', strpos($rule->value('detail'), 'annulée : condition d\'armement retombée') !== false, true);
+verifie('la tuile aussi', strpos(json_decode($rule->value('images'), true)['d'], 'annulée :') !== false, true);
+dahuaRule::recoverDeferred();
+clearStates();
+dahuaRule::checkHold();
+verifie('rien n\'est rattrapé ensuite', count(played(31)), 0);
+$armed = true;
+$now = 51040.0;
+clearStates();
+dahuaRule::test($rule);
+/* test() lèverait une exception si la temporisation refusait : on compte les
+ * dossiers, deux alertes d'une même seconde ne se départageant pas par leur nom. */
+verifie('temporisation rendue : nouveau déclenchement accepté', count(dahuaAlert::recent(10, 31)), 2);
+$armed = false;
+$refused = false;
+try {
+    clearStates();
+    dahuaRule::test(rule(32, array('confirm_delay' => 30, 'arm_condition' => 'ARMED')));
+} catch (Exception $e) {
+    $refused = (strpos($e->getMessage(), 'armement') !== false);
+}
+verifie('condition fausse au déclenchement : refus immédiat', $refused, true);
+$armed = true;
+
+echo "\n== Délai de confirmation sans attente de la photo ==\n";
+$now = 52000.0;
+$rule = rule(33, array('wait_live' => 0, 'confirm_delay' => 20, 'arm_condition' => 'ARMED'));
+dahuaRule::test($rule);
+$alert = alertOf($rule);
+verifie('aucune action au déclenchement', count(played(33)), 0);
+$now = 52001.0;
+captureArrives($alert);
+verifie('la photo ne fait rien partir', count(played(33)), 0);
+dahuaRule::watch($alert);
+verifie('actions jouées au terme du délai (20 s)', played(33, 'actions')[0]['at'], 52020.0);
+
+echo "\n== Délai de confirmation sans condition d'armement : ignoré ==\n";
+$now = 53000.0;
+$rule = rule(34, array('confirm_delay' => 30));
+dahuaRule::test($rule);
+verifie('actions immédiates', count(played(34, 'actions')), 1);
+verifie('« Déclenchée » immédiate', $rule->value('triggered'), 1);
+
+echo "\n== Réinitialisation pendant le délai : annulée ==\n";
+$now = 54000.0;
+$rule = rule(35, array('wait_live' => 1, 'confirm_delay' => 30, 'arm_condition' => 'ARMED'));
+dahuaRule::test($rule);
+$alert = alertOf($rule);
+$now = 54005.0;
+dahuaRule::reset($rule);
+verifie('ni actions, ni actions de fin', count(played(35)), 0);
+verifie('journal : ramenée au repos', log::has('règle ramenée au repos pendant le délai de confirmation'), true);
+$now = 54030.0;
+dahuaRule::watch($alert);
+verifie('le secours ne joue rien ensuite', count(played(35)), 0);
+
+echo "\n== Délai de confirmation : secours mort, rattrapage par checkHold ==\n";
+$now = 55000.0;
+$rule = rule(36, array('wait_live' => 1, 'confirm_delay' => 30, 'arm_condition' => 'ARMED'));
+dahuaRule::test($rule);
+clearStates();
+$now = 55031.0;                                   // dans la marge du secours
+dahuaRule::checkHold();
+verifie('dans la marge : rien', count(played(36)), 0);
+$now = 55033.0;
+clearStates();
+dahuaRule::checkHold();
+verifie('rattrapé par checkHold, « Déclenchée » à 0', count(played(36, 'actions')), 1);
+verifie('« Déclenchée » passée à 1', $rule->value('triggered'), 1);
+
+echo "\n== Bornes du délai de confirmation ==\n";
+verifie('défaut 0', dahuaRule::confirmDelay(rule(40, array())), 0);
+verifie('négatif ramené à 0', dahuaRule::confirmDelay(rule(41, array('confirm_delay' => -5))), 0);
+verifie('600 ramené à 300', dahuaRule::confirmDelay(rule(42, array('confirm_delay' => 600))), 300);
+verifie('sans condition : non appliqué', dahuaRule::confirmation(rule(43, array('confirm_delay' => 30))), 0);
+
+echo "\n== Purge par âge des dossiers d'alerte ==\n";
+/* Des dossiers fabriqués à la date voulue : la purge lit la date dans le nom. */
+function fakeAlert($_ruleId, $_age) {
+    $id = gmdate('Ymd-His', time() - $_age) . '_r' . $_ruleId . '_' . bin2hex(random_bytes(4));
+    $dir = dahuaAlert::baseDir() . '/' . $id;
+    mkdir($dir);
+    file_put_contents($dir . '/meta.json', json_encode(array('id' => $id, 'rule_id' => $_ruleId, 'time' => time() - $_age)));
+    file_put_contents($dir . '/cam10_det_t.jpg', 'jpeg');
+    return $id;
+}
+$day = 86400;
+$rule = rule(60, array());
+$oldLatest = fakeAlert(60, 8 * $day);             // la dernière de la règle 60, vieille
+$oldOther  = fakeAlert(60, 9 * $day);
+$orphan    = fakeAlert(999, 8 * $day);            // règle supprimée
+$recent    = fakeAlert(61, 6 * $day);
+dahua::$equipments[61] = rule(61, array());
+config::$values['max_age_days'] = 0;
+dahuaAlert::purge();
+verifie('0 : rien n\'est purgé par âge', dahuaAlert::path($oldOther) !== false, true);
+unset(config::$values['max_age_days']);           // défaut : 7 jours
+dahuaAlert::purge();
+verifie('plus de 7 jours : supprimée', dahuaAlert::path($oldOther), false);
+verifie('règle supprimée : supprimée', dahuaAlert::path($orphan), false);
+verifie('dernière alerte d\'une règle : gardée', dahuaAlert::path($oldLatest) !== false, true);
+verifie('moins de 7 jours : gardée', dahuaAlert::path($recent) !== false, true);
+config::$values['max_age_days'] = 5;
+dahuaAlert::purge();
+verifie('5 jours : la dernière de la règle 61 reste', dahuaAlert::path($recent) !== false, true);
+config::$values['max_age_days'] = 'abc';
+$oldest = dahuaAlert::oldestKept();
+verifie('saisie illisible : défaut (7 jours)', $oldest > 0 && abs($oldest - (time() - 7 * $day)) <= 1, true);
+unset(config::$values['max_age_days']);
+
+echo "\n== Purge par âge des captures ==\n";
+function fakeShot($_cameraId, $_age) {
+    $name = 'cam' . $_cameraId . '_' . gmdate('Ymd-His', time() - $_age) . '_' . bin2hex(random_bytes(4)) . '.jpg';
+    file_put_contents(dahua::$snapshotDir . '/' . $name, 'jpeg');
+    return $name;
+}
+function shotExists($_name) {
+    return is_file(dahua::$snapshotDir . '/' . $_name);
+}
+$quiet = new FakeEq(11, 'SUD', array('type' => 'camera', 'nvr_id' => 1, 'channel' => 3));
+dahua::$equipments[11] = $quiet;
+$attached = fakeShot(10, 10 * $day);              // désignée par « Fichier de l'image »
+$old10    = fakeShot(10, 9 * $day);
+$new10    = fakeShot(10, 60);
+$old11a   = fakeShot(11, 20 * $day);
+$old11b   = fakeShot(11, 12 * $day);              // la plus récente d'une caméra muette
+$gone     = fakeShot(99, 8 * $day);               // caméra supprimée
+$foreign  = 'cam10_manuel.jpg';
+file_put_contents(dahua::$snapshotDir . '/' . $foreign, 'jpeg');
+$camera->values['snapshot_file'] = dahua::$snapshotDir . '/' . $attached;
+$camera->values['snapshot']      = 'plugins/dahua/core/php/snapshot.php?file=' . rawurlencode($new10);
+config::$values['max_age_days'] = 0;
+verifie('0 : rien n\'est purgé', dahuaAlert::purgeSnapshots(), 0);
+unset(config::$values['max_age_days']);
+verifie('trois captures purgées', dahuaAlert::purgeSnapshots(), 3);
+verifie('celle de « Fichier de l\'image » gardée', shotExists($attached), true);
+verifie('ancienne non désignée : supprimée', shotExists($old10), false);
+verifie('récente : gardée', shotExists($new10), true);
+verifie('caméra muette : sa dernière gardée', shotExists($old11b), true);
+verifie('caméra muette : les autres supprimées', shotExists($old11a), false);
+verifie('caméra supprimée : supprimée', shotExists($gone), false);
+verifie('nom inconnu : pas touché', shotExists($foreign), true);
 
 echo "\n";
 printf("Bilan : %d ok, %d en échec.\n", $ok, $ko);

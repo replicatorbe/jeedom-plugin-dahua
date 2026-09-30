@@ -465,6 +465,17 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 							</div>
 						</div>
 						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Délai de confirmation (s)}}
+								<sup><i class="fas fa-question-circle tooltips" title="{{Au déclenchement, les actions sont retenues ce nombre de secondes, puis la condition d'armement est réévaluée. Si elle est devenue fausse entre-temps, par exemple parce que la présence a reconnu les occupants quelques secondes après les caméras, aucune action ne part et « Déclenchée » ne passe pas à 1.}}"></i></sup>
+							</label>
+							<div class="col-sm-2">
+								<input type="number" min="0" max="300" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="confirm_delay" placeholder="0">
+							</div>
+							<div class="col-sm-7">
+								<span class="help-block" style="margin:0;">{{De 0 à 300 ; 0 par défaut, les actions partent sans délai. Sans condition d'armement, sans effet. Le dossier d'alerte est créé tout de suite et reste dans l'historique, marqué « annulée » si la condition est retombée ; la temporisation n'est alors pas consommée. « Déclenchée » passe à 1 à la confirmation, juste avant les actions.}}</span>
+							</div>
+						</div>
+						<div class="form-group">
 							<div class="col-sm-offset-3 col-sm-8">
 								<span class="help-block" style="margin:0;">{{Décocher « Activer » en haut de cette page désarme complètement la règle, et un scénario peut le faire aussi.}}</span>
 							</div>

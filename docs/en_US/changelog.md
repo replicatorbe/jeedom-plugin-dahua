@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9 — 2026-09-30
+
+**No more alerts when coming home**
+
+- New rule option **Confirmation delay** (0 to 300 s, 0 by default). Cameras
+  saw the occupants a few seconds before presence detection recognised them,
+  and the "Intrusion" alert went off. The actions are now held back for that
+  many seconds, then the arming condition is re-evaluated: if it has become
+  false nothing runs, and the alert is marked **cancelled** in the history, the
+  log and *Trigger detail*.
+- *Triggered* goes to 1 only on confirmation. A cancelled alert does not use
+  up the cooldown. Resetting or disabling the rule during the delay cancels it.
+- Same mechanism as the fresh snapshot wait: nothing sleeps in the daemon, and
+  the wait survives a Jeedom restart.
+
+**Maximum retention**
+
+- New plugin setting, 7 days by default (0 disables it): older snapshots and
+  alert folders are deleted, whatever the count quotas. A silent or deleted
+  camera no longer keeps its snapshots forever.
+- The latest snapshot of each camera, the one *Image file* points to, and the
+  latest alert of each rule are always kept. Alerts are checked every minute,
+  snapshots every hour.
+
 ## 0.8 — 2026-09-29
 
 **Waiting for the picture before notifying**

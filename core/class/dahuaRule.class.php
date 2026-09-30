@@ -97,6 +97,16 @@ class dahuaRule {
     const WAIT_POLL = 0.25;
 
     /*
+     * Délai de confirmation (option « confirm_delay » d'une règle) : les
+     * actions sont retenues N secondes, puis la condition d'armement est
+     * réévaluée. Elle est tombée entre-temps — la présence a reconnu les
+     * occupants quelques secondes après les caméras — et rien ne part. 0 par
+     * défaut, le comportement d'origine ; cinq minutes au plus, au-delà ce
+     * n'est plus une confirmation mais une alarme en retard.
+     */
+    const MAX_CONFIRM_DELAY = 300;
+
+    /*
      * Marge laissée au processus de secours avant que checkHold() ne force
      * lui-même des actions dont l'échéance est passée. Sans elle, les deux se
      * disputeraient chaque échéance — sans danger, le jeton est unique, mais
@@ -505,6 +515,8 @@ class dahuaRule {
             return false;
         }
 
+        /* Gardée pour rendre la temporisation si la confirmation échoue. */
+        $firedBefore = $_state['fired'];
         $_state['fired'] = $now;
         $_state['until'] = $now + max(1, (int) $_rule->getConfiguration('hold', self::DEFAULT_HOLD));
 
@@ -545,12 +557,21 @@ class dahuaRule {
                    . __('dossier d\'alerte non créé :', __FILE__) . ' ' . $e->getMessage());
         }
 
-        /* « Déclenchée » passe à 1 tout de suite, attente ou pas : un scénario
-         * qui en dépend, la tuile, l'historique ne doivent pas payer l'attente
-         * de la photo. Seules les actions de la règle sont différées. */
-        $_rule->checkAndUpdateCmd('triggered', 1);
+        /* « Déclenchée » passe à 1 tout de suite quand seule la photo est
+         * attendue : un scénario qui en dépend, la tuile, l'historique ne
+         * doivent pas payer l'attente de la photo. Avec un délai de
+         * confirmation, non : un scénario déclenché sur elle notifierait
+         * exactement l'alarme que le délai doit pouvoir annuler. Elle passe
+         * alors à 1 à la confirmation, juste avant les actions. */
+        $confirming = ($alertId !== '' && self::confirmation($_rule) > 0);
+        if (!$confirming) {
+            $_rule->checkAndUpdateCmd('triggered', 1);
+        }
 
-        if (!self::deferActions($_rule, $_state, $alertId)) {
+        if (!self::deferActions($_rule, $_state, $alertId, $firedBefore)) {
+            if ($confirming) {
+                $_rule->checkAndUpdateCmd('triggered', 1);
+            }
             self::runActions($_rule, 'actions');
         }
         return true;
@@ -583,23 +604,45 @@ class dahuaRule {
      * l'alerte : exactement une exécution par déclenchement, quel que soit
      * l'ordre d'arrivée des candidats.
      *
+     * Le délai de confirmation emprunte la même voie : l'attente est la même,
+     * seule change la décision prise à l'échéance (voir runDeferred()). Rien
+     * ne dort dans la requête du démon, ni dans le cron : c'est le processus
+     * de secours, détaché, qui porte les trente secondes.
+     *
      * Retourne true si les actions sont différées ; false si l'appelant doit
      * les jouer tout de suite.
      */
-    private static function deferActions($_rule, &$_state, $_alertId) {
-        if ((int) $_rule->getConfiguration('wait_live', 0) != 1 || $_alertId === '') {
+    private static function deferActions($_rule, &$_state, $_alertId, $_firedBefore = 0) {
+        $confirm = self::confirmation($_rule);
+        $live    = ((int) $_rule->getConfiguration('wait_live', 0) == 1);
+        if ((!$live && $confirm == 0) || $_alertId === '') {
+            /* Sans dossier d'alerte, l'attente n'a nulle part où s'inscrire :
+             * l'alarme part tout de suite plutôt que jamais. */
+            if ($confirm > 0) {
+                log::add('dahua', 'warning', $_rule->getHumanName() . ' — '
+                       . __('délai de confirmation ignoré : aucun dossier d\'alerte pour l\'inscrire, actions jouées sans attendre', __FILE__));
+            }
             return false;
         }
         /* Capture fraîche décochée dans la configuration du plugin : aucune
          * photo n'est en route, attendre ne ferait que retarder l'alarme. */
-        if ((int) config::byKey('alert_shot', 'dahua', 1) != 1) {
+        if ($live && (int) config::byKey('alert_shot', 'dahua', 1) != 1) {
             log::add('dahua', 'debug', $_rule->getHumanName() . ' — '
                    . __('pas d\'attente : la capture fraîche est désactivée dans la configuration du plugin', __FILE__));
-            return false;
+            $live = false;
+            if ($confirm == 0) {
+                return false;
+            }
         }
-        $max   = self::waitLiveMax($_rule);
+        $max   = $live ? self::waitLiveMax($_rule) : 0;
         $since = self::now();
-        $outcome = dahuaAlert::deferActions($_alertId, $_rule->getId(), $since, $since + $max);
+        $extra = array('live' => $live ? 1 : 0);
+        if ($confirm > 0) {
+            $extra['confirm']      = $since + $confirm;
+            $extra['fired']        = (int) $_state['fired'];
+            $extra['fired_before'] = (int) $_firedBefore;
+        }
+        $outcome = dahuaAlert::deferActions($_alertId, $_rule->getId(), $since, $since + max($max, $confirm), $extra);
         if ($outcome !== dahuaAlert::ACTIONS_PENDING) {
             $why = array(
                 'live'     => __('la capture fraîche est déjà là', __FILE__),
@@ -622,8 +665,15 @@ class dahuaRule {
         }
         self::saveState($_rule->getId(), $_state);
 
-        log::add('dahua', 'info', $_rule->getHumanName() . ' — '
-               . __('actions différées jusqu\'à la capture fraîche, au plus', __FILE__) . ' ' . $max . ' s');
+        if ($confirm > 0) {
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — '
+                   . __('actions différées de', __FILE__) . ' ' . $confirm . ' s, '
+                   . __('le temps de confirmer la condition d\'armement', __FILE__)
+                   . ($live ? ' ' . __('et d\'attendre la capture fraîche', __FILE__) : ''));
+        } else {
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — '
+                   . __('actions différées jusqu\'à la capture fraîche, au plus', __FILE__) . ' ' . $max . ' s');
+        }
         self::spawnWatcher($_alertId);
         return true;
     }
@@ -633,6 +683,24 @@ class dahuaRule {
         $raw = $_rule->getConfiguration('wait_live_max', '');
         $max = ($raw === '' || $raw === null) ? self::DEFAULT_WAIT_LIVE_MAX : (int) $raw;
         return max(self::MIN_WAIT_LIVE_MAX, min(self::MAX_WAIT_LIVE_MAX, $max));
+    }
+
+    /* Délai de confirmation saisi, borné : 0 à MAX_CONFIRM_DELAY, 0 par défaut. */
+    public static function confirmDelay($_rule) {
+        return max(0, min(self::MAX_CONFIRM_DELAY, (int) $_rule->getConfiguration('confirm_delay', 0)));
+    }
+
+    /*
+     * Délai de confirmation effectivement appliqué. Il ne vaut que pour une
+     * règle qui a une condition d'armement : c'est elle qu'il confirme. Sans
+     * condition, il n'y aurait rien à réévaluer, et retenir l'alarme trente
+     * secondes pour rien serait le pire des réglages silencieux.
+     */
+    public static function confirmation($_rule) {
+        if (trim((string) $_rule->getConfiguration('arm_condition')) == '') {
+            return 0;
+        }
+        return self::confirmDelay($_rule);
     }
 
     /*
@@ -674,17 +742,22 @@ class dahuaRule {
     public static function watch($_alertId) {
         /* Garde-fou contre une horloge qui ne passerait pas : on ne dort
          * jamais plus que le plus long délai permis, plus une marge. */
-        $limit = self::now() + self::MAX_WAIT_LIVE_MAX + 5;
+        $limit = self::now() + max(self::MAX_WAIT_LIVE_MAX, self::MAX_CONFIRM_DELAY) + 5;
         while (true) {
             $pending = dahuaAlert::pendingActions($_alertId);
             if ($pending === null) {
                 return false;                     // déjà joué par l'événement
             }
             $now = self::now();
-            if ($pending['ready'] !== '' || $now >= $pending['deadline'] || $now >= $limit) {
+            /* Pendant le délai de confirmation, ni la photo ni rien d'autre ne
+             * fait partir les actions : on attend son terme. */
+            $ready = ($now >= $pending['confirm'])
+                  && ($pending['ready'] !== '' || !$pending['live']);
+            if ($ready || $now >= $pending['deadline'] || $now >= $limit) {
                 return self::playDeferred($_alertId, $now >= $pending['deadline'] || $now >= $limit);
             }
-            self::pause(min(self::WAIT_POLL, max(0.01, $pending['deadline'] - $now)));
+            $next = ($now < $pending['confirm']) ? $pending['confirm'] : $pending['deadline'];
+            self::pause(min(self::WAIT_POLL, max(0.01, $next - $now)));
         }
     }
 
@@ -695,7 +768,7 @@ class dahuaRule {
      */
     public static function recoverDeferred() {
         $now = self::now();
-        $since = (int) $now - self::WAIT_MAX_LATE - self::MAX_WAIT_LIVE_MAX - 120;
+        $since = (int) $now - self::WAIT_MAX_LATE - max(self::MAX_WAIT_LIVE_MAX, self::MAX_CONFIRM_DELAY) - 120;
         foreach (dahuaAlert::pendingSince($since) as $alertId => $deadline) {
             if ($now >= $deadline + self::WAIT_GRACE) {
                 self::playDeferred($alertId, true);
@@ -739,13 +812,20 @@ class dahuaRule {
         $elapsed = number_format(max(0, $now - $claim['since']), 1, ',', '');
         $late    = $now - $claim['deadline'];
 
-        if ($claim['reason'] == 'timeout' && $late > self::WAIT_MAX_LATE) {
+        /* Tout rattrapage tardif est abandonné, et pas seulement celui d'une
+         * photo jamais venue : une confirmation retrouvée une heure après ne
+         * confirmerait plus rien. Seul le retour au repos forcé passe. */
+        if ($claim['reason'] != 'forced' && $late > self::WAIT_MAX_LATE) {
             $text = $rule->getHumanName() . ' — ' . __('actions du déclenchement abandonnées : retrouvées', __FILE__)
                   . ' ' . round($late) . ' ' . __('s après leur échéance (Jeedom arrêté pendant l\'attente ?)', __FILE__)
                   . ' ' . $_alertId;
             log::add('dahua', 'error', $text);
             message::add('dahua', $text, '', 'ruleDeferred' . $rule->getId());
             return $rule;
+        }
+
+        if ($claim['confirm'] > 0) {
+            return self::confirmDeferred($rule, $_alertId, $claim, $now, $elapsed);
         }
 
         switch ($claim['reason']) {
@@ -773,6 +853,64 @@ class dahuaRule {
     }
 
     /*
+     * Terme du délai de confirmation : la condition d'armement est réévaluée.
+     *
+     * Vraie, la règle se déclenche pour de bon — « Déclenchée » à 1, durée de
+     * maintien comptée à partir de maintenant (elle serait sinon déjà écoulée,
+     * et la règle retomberait dans la foulée), puis les actions.
+     *
+     * Fausse, rien ne part. Le dossier d'alerte reste, marqué annulé ; le
+     * journal et « Détail du déclenchement » le disent. Et la temporisation
+     * est RENDUE : une alerte que personne n'a reçue n'a pas à en consommer
+     * une. Pendant le délai elle a bien joué son rôle — empêcher chaque
+     * détection de la rafale d'ouvrir sa propre alerte — mais la garder
+     * au-delà rendrait la règle sourde cinq minutes à une vraie intrusion qui
+     * suivrait, si la condition redevenait vraie entre-temps. Tant qu'elle
+     * reste fausse, rien ne change : la règle refuse de toute façon de se
+     * déclencher. La temporisation n'est rendue que si aucun déclenchement
+     * plus récent ne l'a reprise.
+     *
+     * Un retour au repos forcé pendant le délai (réinitialisation,
+     * désactivation) annule aussi : c'est un désarmement.
+     */
+    private static function confirmDeferred($_rule, $_alertId, $_claim, $_now, $_elapsed) {
+        $forced = ($_now < $_claim['confirm']);
+        $armed  = !$forced && self::armCondition($_rule);
+        unset(self::$_states[(int) $_rule->getId()]);
+        $state  = self::state($_rule->getId());
+        $current = ($_claim['fired'] > 0 && $state['fired'] == $_claim['fired']);
+
+        if ($armed) {
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — ' . __('confirmée après', __FILE__)
+                   . ' ' . $_elapsed . ' s : ' . __('condition d\'armement toujours remplie, actions jouées', __FILE__)
+                   . (($_claim['reason'] == 'timeout') ? ' (' . __('sans capture fraîche', __FILE__) . ')' : ''));
+            if ($current) {
+                $state['until'] = time() + max(1, (int) $_rule->getConfiguration('hold', self::DEFAULT_HOLD));
+                self::saveState($_rule->getId(), $state);
+            }
+            $_rule->checkAndUpdateCmd('triggered', 1);
+            self::runActions($_rule, 'actions');
+            return $_rule;
+        }
+
+        $reason = $forced
+                ? __('règle ramenée au repos pendant le délai de confirmation', __FILE__)
+                : __('condition d\'armement retombée pendant le délai de confirmation', __FILE__);
+        log::add('dahua', 'info', $_rule->getHumanName() . ' — ' . __('annulée après', __FILE__)
+               . ' ' . $_elapsed . ' s : ' . $reason . ', ' . __('aucune action jouée', __FILE__) . ' (' . $_alertId . ')');
+        if ($current) {
+            $state['fired'] = $_claim['fired_before'];
+            $state['until'] = 0;
+            self::saveState($_rule->getId(), $state);
+            $meta = dahuaAlert::readMeta($_alertId);
+            $detail = isset($meta['detail']) ? $meta['detail'] : '';
+            $_rule->checkAndUpdateCmd('detail', $detail . ' — ' . __('annulée :', __FILE__) . ' ' . $reason);
+        }
+        dahuaAlert::markCancelled($_alertId, $reason, $current);
+        return $_rule;
+    }
+
+    /*
      * Nettoie la liste des alertes en attente d'une règle contre leur
      * description, et joue d'office celles dont l'échéance est largement
      * dépassée (voir WAIT_GRACE). Rend true s'il reste une attente en cours.
@@ -793,6 +931,9 @@ class dahuaRule {
             }
             $left[] = $alertId;
         }
+        /* Relu : une confirmation jouée ci-dessus a pu modifier l'état
+         * (temporisation rendue, maintien relancé). */
+        $_state = self::state($_rule->getId());
         if ($left !== $_state['deferred']) {
             $_state['deferred'] = $left;
             self::saveState($_rule->getId(), $_state);
@@ -815,6 +956,7 @@ class dahuaRule {
         foreach ($state['deferred'] as $alertId) {
             self::runDeferred($alertId, true, $_context);
         }
+        $state = self::state($_rule->getId());
         $state['deferred'] = array();
         self::saveState($_rule->getId(), $state);
     }
@@ -976,20 +1118,25 @@ class dahuaRule {
     }
 
     private static function checkRule($_rule) {
-        $triggered = $_rule->getCmd('info', 'triggered');
-        if (!is_object($triggered) || $triggered->execCmd() != 1) {
-            return;
-        }
         $state = self::state($_rule->getId());
         /*
-         * Des actions « au déclenchement » attendent encore leur photo : le
-         * retour au repos attend avec elles. C'est le choix retenu quand la
-         * durée de maintien est plus courte que l'attente — « Déclenchée »
-         * reste à 1 un peu plus longtemps, mais les actions de fin (couper la
-         * sirène, notifier la fin) ne partent jamais avant celles du début.
-         * L'attente étant bornée à trente secondes, le retard l'est aussi.
+         * Des actions « au déclenchement » attendent encore — leur photo, ou
+         * la fin du délai de confirmation. Examinées AVANT l'état de
+         * « Déclenchée » : pendant une confirmation, elle est encore à 0, et
+         * le rattrapage d'une attente échue ne doit pas dépendre du cron seul.
+         *
+         * Le retour au repos attend avec elles. C'est le choix retenu quand la
+         * durée de maintien est plus courte que l'attente de la photo —
+         * « Déclenchée » reste à 1 un peu plus longtemps, mais les actions de
+         * fin (couper la sirène, notifier la fin) ne partent jamais avant
+         * celles du début. L'attente étant bornée à trente secondes, le retard
+         * l'est aussi.
          */
         if (self::hasDeferred($_rule, $state)) {
+            return;
+        }
+        $triggered = $_rule->getCmd('info', 'triggered');
+        if (!is_object($triggered) || $triggered->execCmd() != 1) {
             return;
         }
         /*

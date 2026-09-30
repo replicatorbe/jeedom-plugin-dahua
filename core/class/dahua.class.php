@@ -484,6 +484,9 @@ class dahua extends eqLogic {
              */
             $this->setConfiguration('wait_live', ((int) $this->getConfiguration('wait_live', 0) == 1) ? 1 : 0);
             $this->setConfiguration('wait_live_max', dahuaRule::waitLiveMax($this));
+            /* Délai de confirmation : 0 (vide) garde le comportement d'origine,
+             * sans migration. Borné comme le moteur le borne. */
+            $this->setConfiguration('confirm_delay', dahuaRule::confirmDelay($this));
             $scope = $this->getConfiguration('camera_scope');
             if (!in_array($scope, array(dahuaRule::SCOPE_ANY, dahuaRule::SCOPE_SAME, dahuaRule::SCOPE_DISTINCT))) {
                 $this->setConfiguration('camera_scope', dahuaRule::SCOPE_ANY);
@@ -733,6 +736,20 @@ class dahua extends eqLogic {
             dahuaAlert::purge();
         } catch (Throwable $e) {
             log::add(__CLASS__, 'error', __('Purge des alertes en échec :', __FILE__) . ' ' . $e->getMessage());
+        }
+    }
+
+    /*
+     * Le cron horaire du coeur : purge par âge des captures courantes. Pas à
+     * la minute, contrairement aux alertes : le dossier compte des centaines
+     * de fichiers et une lecture des commandes de chaque caméra, et une
+     * capture de plus ou de moins pendant une heure ne change rien.
+     */
+    public static function cronHourly() {
+        try {
+            dahuaAlert::purgeSnapshots();
+        } catch (Throwable $e) {
+            log::add(__CLASS__, 'error', __('Purge des captures en échec :', __FILE__) . ' ' . $e->getMessage());
         }
     }
 

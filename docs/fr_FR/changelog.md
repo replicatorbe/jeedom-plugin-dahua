@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9 — 30/09/2026
+
+**Ne plus alerter au retour de la maison**
+
+- Nouvelle option de règle **Délai de confirmation** (0 à 300 s, 0 par défaut).
+  Les caméras voyaient les occupants quelques secondes avant que la présence ne
+  les reconnaisse, et l'alerte « Intrusion » partait. Les actions sont
+  désormais retenues ce nombre de secondes, puis la condition d'armement est
+  réévaluée : devenue fausse, rien ne part, et l'alerte est marquée
+  **annulée** dans l'historique, le journal et *Détail du déclenchement*.
+- *Déclenchée* ne passe à 1 qu'à la confirmation. Une alerte annulée ne
+  consomme pas la temporisation. Réinitialiser ou désactiver la règle pendant
+  le délai l'annule.
+- Même mécanisme que l'attente de la capture fraîche : rien ne dort dans le
+  démon, l'attente survit à un redémarrage de Jeedom.
+
+**Durée de conservation maximale**
+
+- Nouveau réglage du plugin, 7 jours par défaut (0 désactive) : les captures
+  et les dossiers d'alerte plus anciens sont supprimés, quels que soient les
+  quotas en nombre. Une caméra muette ou supprimée ne garde plus ses captures
+  indéfiniment.
+- Restent toujours la dernière capture de chaque caméra, celle que désigne
+  *Fichier de l'image*, et la dernière alerte de chaque règle. Alertes
+  vérifiées chaque minute, captures chaque heure.
+
 ## 0.8 — 29/09/2026
 
 **Attendre la photo avant de notifier**

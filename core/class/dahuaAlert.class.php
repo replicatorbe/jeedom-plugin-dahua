@@ -108,6 +108,15 @@ class dahuaAlert {
     const MAX_KEEP = 5000;
 
     /*
+     * Âge maximal, en jours, de tout ce que le plugin garde sur le disque —
+     * dossiers d'alerte et captures courantes. Les quotas en nombre ne disent
+     * rien du temps : sur une installation calme, trois cents alertes couvrent
+     * des mois, et une caméra muette garde ses cinquante captures pour
+     * toujours. Sept jours couvrent une semaine d'absence. 0 désactive.
+     */
+    const DEFAULT_MAX_AGE_DAYS = 7;
+
+    /*
      * Nombre de caméras qu'un dossier d'alerte peut porter.
      *
      * Quatre, et la même valeur que MAX_ALERT_SHOTS côté démon — un écart entre
@@ -899,12 +908,24 @@ class dahuaAlert {
      * qu'un seul des candidats (l'événement de capture, le processus de
      * secours, le cron) peut le prendre. Exactement une exécution.
      *
+     * Le même mécanisme porte le délai de confirmation (option
+     * « confirm_delay ») : les actions sont retenues N secondes, puis la
+     * condition d'armement est réévaluée avant de les jouer. Deux champs de
+     * plus suffisent — « confirm », l'heure avant laquelle personne ne prend
+     * le jeton sauf retour au repos forcé, et « live », qui dit si la capture
+     * fraîche est attendue elle aussi. Les deux attentes se superposent :
+     * l'échéance est la plus lointaine des deux.
+     *
      * Forme dans meta.json :
      *   actions: {state: pending|done, since, deadline, rule_id,
-     *             done_at, reason}
-     * since et deadline sont des horodatages à la microseconde : le délai réel
-     * est journalisé, et « 1,0 s » ou « 10,0 s » ne se distinguent pas à la
-     * seconde près d'un arrondi malheureux.
+     *             confirm, live, fired, fired_before, done_at, reason}
+     * since, deadline et confirm sont des horodatages à la microseconde : le
+     * délai réel est journalisé, et « 1,0 s » ou « 10,0 s » ne se distinguent
+     * pas à la seconde près d'un arrondi malheureux. fired et fired_before
+     * servent à rendre la temporisation si la confirmation échoue.
+     *
+     * Une alerte dont la confirmation a échoué garde son dossier — c'est de
+     * l'historique — et porte « cancelled », la raison de l'annulation.
      */
     const ACTIONS_PENDING = 'pending';
     const ACTIONS_DONE    = 'done';
@@ -957,20 +978,23 @@ class dahuaAlert {
      * une attente qu'on ne sait pas inscrire serait une attente que rien ne
      * viendrait jamais lever.
      */
-    public static function deferActions($_id, $_ruleId, $_since, $_deadline) {
+    public static function deferActions($_id, $_ruleId, $_since, $_deadline, $_extra = array()) {
         $outcome = '';
-        self::updateMeta($_id, function ($_meta) use (&$outcome, $_ruleId, $_since, $_deadline) {
+        /* Un délai de confirmation s'inscrit toujours : que la photo soit déjà
+         * là ne dispense pas de réévaluer la condition d'armement. */
+        $confirm = isset($_extra['confirm']) ? (float) $_extra['confirm'] : 0.0;
+        self::updateMeta($_id, function ($_meta) use (&$outcome, $_ruleId, $_since, $_deadline, $_extra, $confirm) {
             $ready = self::liveReadiness($_meta);
-            if ($ready !== '') {
+            if ($ready !== '' && $confirm <= 0) {
                 $outcome = $ready;
                 return null;                      // rien à écrire
             }
-            $_meta['actions'] = array(
+            $_meta['actions'] = array_merge(array(
                 'state'    => self::ACTIONS_PENDING,
                 'rule_id'  => (int) $_ruleId,
                 'since'    => (float) $_since,
                 'deadline' => (float) $_deadline,
-            );
+            ), array_intersect_key($_extra, array_flip(array('confirm', 'live', 'fired', 'fired_before'))));
             $outcome = self::ACTIONS_PENDING;
             return $_meta;
         });
@@ -999,8 +1023,23 @@ class dahuaAlert {
             'rule_id'  => isset($meta['actions']['rule_id']) ? (int) $meta['actions']['rule_id'] : 0,
             'since'    => isset($meta['actions']['since']) ? (float) $meta['actions']['since'] : 0.0,
             'deadline' => isset($meta['actions']['deadline']) ? (float) $meta['actions']['deadline'] : 0.0,
+            'confirm'  => self::confirmOf($meta['actions']),
+            'live'     => self::waitsLive($meta['actions']),
             'ready'    => self::liveReadiness($meta),
         );
+    }
+
+    /* Heure avant laquelle le jeton n'est pas donné (délai de confirmation),
+     * 0 s'il n'y en a pas. */
+    private static function confirmOf($_actions) {
+        return isset($_actions['confirm']) ? (float) $_actions['confirm'] : 0.0;
+    }
+
+    /* L'attente porte-t-elle aussi sur la capture fraîche ? Une attente
+     * inscrite avant le délai de confirmation n'a pas ce champ : elle
+     * n'attendait que la photo. */
+    private static function waitsLive($_actions) {
+        return !isset($_actions['live']) || (int) $_actions['live'] == 1;
     }
 
     /*
@@ -1009,13 +1048,16 @@ class dahuaAlert {
      * passe sous le verrou exclusif de l'alerte, et le jeton pris est écrit
      * avant que le verrou ne soit rendu.
      *
-     * Sans $_force, le jeton n'est donné que si la capture est là ou si
-     * l'échéance est passée ; avec $_force (réinitialisation, désactivation de
-     * la règle, rattrapage), il est donné dans tous les cas.
+     * Sans $_force, le jeton n'est donné qu'une fois le délai de confirmation
+     * écoulé, et seulement si la capture est là (ou n'est pas attendue) ou si
+     * l'échéance est passée ; avec $_force (réinitialisation, désactivation
+     * de la règle, rattrapage), il est donné dans tous les cas.
      *
-     * Retourne null, ou {rule_id, since, deadline, reason} avec pour raison
-     * 'live' / 'returned' / 'none' (la capture est là, ou plus rien à
-     * attendre), 'timeout' (échéance atteinte sans capture) ou 'forced'.
+     * Retourne null, ou {rule_id, since, deadline, confirm, fired,
+     * fired_before, reason} avec pour raison 'live' / 'returned' / 'none' (la
+     * capture est là, ou plus rien à attendre), 'confirmed' (délai de
+     * confirmation écoulé, pas de capture attendue), 'timeout' (échéance
+     * atteinte sans capture) ou 'forced'.
      */
     public static function claimActions($_id, $_force, $_now) {
         $claim = null;
@@ -1024,8 +1066,16 @@ class dahuaAlert {
                 return null;                      // déjà joué, ou jamais différé
             }
             $deadline = isset($_meta['actions']['deadline']) ? (float) $_meta['actions']['deadline'] : 0.0;
-            $ready = self::liveReadiness($_meta);
-            if ($ready !== '') {
+            $confirm  = self::confirmOf($_meta['actions']);
+            $ready = self::waitsLive($_meta['actions']) ? self::liveReadiness($_meta) : 'confirmed';
+            if ($_now < $confirm) {
+                /* Délai de confirmation en cours : seul un retour au repos
+                 * forcé passe, et il ne confirme rien. */
+                if (!$_force) {
+                    return null;
+                }
+                $reason = 'forced';
+            } elseif ($ready !== '') {
                 $reason = $ready;
             } elseif ($_now >= $deadline) {
                 $reason = 'timeout';
@@ -1042,6 +1092,9 @@ class dahuaAlert {
                                                                    : (int) $_meta['rule_id'],
                 'since'    => isset($_meta['actions']['since']) ? (float) $_meta['actions']['since'] : (float) $_now,
                 'deadline' => $deadline,
+                'confirm'  => $confirm,
+                'fired'    => isset($_meta['actions']['fired']) ? (int) $_meta['actions']['fired'] : 0,
+                'fired_before' => isset($_meta['actions']['fired_before']) ? (int) $_meta['actions']['fired_before'] : 0,
                 'reason'   => $reason,
             );
             return $_meta;
@@ -1082,6 +1135,20 @@ class dahuaAlert {
         }
         ksort($pending);                          // la plus ancienne d'abord
         return $pending;
+    }
+
+    /*
+     * Note l'annulation d'une alerte dont la confirmation a échoué. Le dossier
+     * reste : l'historique doit montrer que les caméras ont vu quelqu'un, et
+     * pourquoi personne n'a été prévenu. $_republish ne republie la tuile que
+     * si cette alerte est toujours la dernière de la règle — une alerte plus
+     * récente ne doit pas être recouverte par celle-ci.
+     */
+    public static function markCancelled($_id, $_reason, $_republish) {
+        return self::updateMeta($_id, function ($_meta) use ($_reason) {
+            $_meta['cancelled'] = (string) $_reason;
+            return $_meta;
+        }, $_republish ? self::publisher($_id) : null) !== null;
     }
 
     /* =============================================================== WIDGET */
@@ -1144,7 +1211,11 @@ class dahuaAlert {
         return json_encode(array(
             'a'  => isset($_meta['id']) ? $_meta['id'] : '',
             't'  => isset($_meta['time']) ? (int) $_meta['time'] : time(),
-            'd'  => isset($_meta['detail']) ? (string) $_meta['detail'] : '',
+            /* Une alerte annulée le dit dans son libellé, le seul texte que la
+             * tuile affiche : des images sans « annulée » passeraient pour une
+             * intrusion dont personne n'a été averti. */
+            'd'  => (isset($_meta['detail']) ? (string) $_meta['detail'] : '')
+                  . (!empty($_meta['cancelled']) ? ' — ' . __('annulée :', __FILE__) . ' ' . $_meta['cancelled'] : ''),
             /* « p » n\'est lu par aucune interface : la tuile préfère le « w »
              * de chaque caméra, pour pouvoir dire LAQUELLE manque plutôt que
              * combien. Il est conservé parce qu\'il est le seul endroit où le
@@ -1331,6 +1402,10 @@ class dahuaAlert {
      * courantes, elle, ne se déclenche qu'à l'écriture, si bien qu'une caméra
      * devenue muette y laisse ses fichiers indéfiniment. On ne refait pas cette
      * erreur ici.
+     *
+     * L'âge maximal (max_age_days) est appliqué dans la même boucle : la date
+     * se lit dans le nom du dossier, le coût est nul, et il n'y a aucune
+     * raison de laisser une alerte périmée survivre une heure de plus.
      */
     public static function purge() {
         $base = self::baseDir();
@@ -1354,6 +1429,7 @@ class dahuaAlert {
         /* Zéro désactive la garantie par âge : seul le rang compte alors. */
         $fullDays = self::setting('alert_keep_full_days', self::DEFAULT_KEEP_FULL_DAYS, 0);
         $fullSince = time() - $fullDays * 86400;
+        $oldest    = self::oldestKept();
 
         $dirs = self::listDirs($base);
         if (empty($dirs)) {
@@ -1391,7 +1467,7 @@ class dahuaAlert {
             $ruleId = self::ruleIdOf($id);
             $latest = !isset($shown[$ruleId]) && self::ruleExists($ruleId);
             $shown[$ruleId] = true;                   // un seul appel par règle
-            if ($rank > $keep && !$latest) {
+            if (($rank > $keep || self::timeOf($id) < $oldest) && !$latest) {
                 self::removeDir($base . '/' . $id);
                 continue;
             }
@@ -1400,6 +1476,108 @@ class dahuaAlert {
             }
             self::stripFullImages($base . '/' . $id, $id, $latest);
         }
+    }
+
+    /*
+     * Date en deçà de laquelle rien n'est gardé, selon l'âge maximal réglé ; 0
+     * quand il est désactivé. Même règle que les autres réglages : une saisie
+     * hors bornes revient au défaut, et seul un 0 explicite désactive.
+     */
+    public static function oldestKept() {
+        /* Ici 0 désactive : une saisie illisible, que (int) ramènerait à 0,
+         * doit retomber sur le défaut et non couper la purge sans le dire. */
+        $raw = trim((string) config::byKey('max_age_days', 'dahua', self::DEFAULT_MAX_AGE_DAYS));
+        $days = ctype_digit($raw) ? self::setting('max_age_days', self::DEFAULT_MAX_AGE_DAYS, 0)
+                                  : self::DEFAULT_MAX_AGE_DAYS;
+        return ($days > 0) ? time() - $days * 86400 : 0;
+    }
+
+    /*
+     * Purge par âge des captures courantes (data/snapshots).
+     *
+     * Le nombre y est déjà borné à l'écriture (snapshot_keep par caméra), mais
+     * seulement à l'écriture : une caméra muette, ou supprimée, y laisse ses
+     * fichiers indéfiniment. Appelée par le cron horaire — une capture de plus
+     * ou de moins pendant une heure ne change rien, et le dossier compte
+     * plusieurs centaines de fichiers.
+     *
+     * Échappent à l'âge, pour chaque caméra existante :
+     *   - sa capture la plus récente, celle que montre « Dernière image » : une
+     *     caméra calme depuis une semaine n'a pas à perdre sa vignette ;
+     *   - le fichier que désignent « Fichier de l'image » et « Dernière image »,
+     *     s'ils diffèrent : un scénario qui le joint à une notification ne doit
+     *     pas tomber sur un fichier effacé.
+     * Ceux d'une caméra supprimée n'ont plus de commande à servir et suivent
+     * la règle commune.
+     *
+     * La date se lit dans le nom (cam<id>_<Ymd-His en UTC>_<jeton>.jpg), comme
+     * pour les alertes : un déploiement ou une copie qui toucherait les dates
+     * des fichiers ne doit rien changer. Un nom qui n'a pas cette forme n'a pas
+     * été écrit par le plugin, et n'est pas touché.
+     */
+    public static function purgeSnapshots() {
+        $oldest = self::oldestKept();
+        if ($oldest <= 0) {
+            return 0;
+        }
+        $dir = dahua::snapshotDir();
+        if ($dir === false) {
+            return 0;
+        }
+        $files = glob($dir . '/cam*_*.jpg');
+        if (empty($files)) {
+            return 0;
+        }
+        /* Tri par nom : par caméra, puis par date au sein d'une caméra. */
+        sort($files);
+
+        $kept = array();
+        $cameras = array();
+        foreach (dahua::byTypeAndSearchConfiguration('dahua', array('type' => dahua::TYPE_CAMERA)) as $camera) {
+            $cameras[(int) $camera->getId()] = true;
+            foreach (array('snapshot_file', 'snapshot') as $logicalId) {
+                $cmd = $camera->getCmd('info', $logicalId);
+                $value = is_object($cmd) ? (string) $cmd->execCmd() : '';
+                /* « Dernière image » est une adresse (…snapshot.php?file=…),
+                 * « Fichier de l'image » un chemin : on n'en garde que le nom. */
+                if (preg_match('/[?&]file=([^&]+)/', $value, $match) === 1) {
+                    $value = rawurldecode($match[1]);
+                }
+                if ($value != '') {
+                    $kept[basename($value)] = true;
+                }
+            }
+        }
+        $newest = array();
+        foreach ($files as $file) {
+            if (preg_match('/^cam(\d+)_/', basename($file), $match) === 1 && isset($cameras[(int) $match[1]])) {
+                $newest[(int) $match[1]] = basename($file);   // tri croissant : la dernière gagne
+            }
+        }
+        foreach ($newest as $name) {
+            $kept[$name] = true;
+        }
+
+        $removed = 0;
+        foreach ($files as $file) {
+            $name = basename($file);
+            if (isset($kept[$name])
+             || preg_match('/^cam\d+_(\d{8}-\d{6})_[0-9a-f]{8}\.jpg$/D', $name, $match) !== 1) {
+                continue;
+            }
+            $date = DateTime::createFromFormat('!Ymd-His', $match[1], new DateTimeZone('UTC'));
+            if ($date === false || $date->getTimestamp() >= $oldest) {
+                continue;
+            }
+            if (@unlink($file)) {
+                $removed++;
+            }
+        }
+        if ($removed > 0) {
+            log::add('dahua', 'debug', $removed . ' ' . __('captures de plus de', __FILE__) . ' '
+                   . round((time() - $oldest) / 86400) . ' ' . __('jours supprimées', __FILE__));
+        }
+        return $removed;
     }
 
     /* La règle d'un dossier se lit dans son nom (…_r<id>_…), sans ouvrir la

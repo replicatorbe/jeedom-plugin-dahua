@@ -181,7 +181,11 @@ Activez **Capturer à chaque détection** dans la configuration du plugin pour
 qu'une image soit prise à chaque début d'événement. Le rythme est limité à une
 capture toutes les 10 secondes par caméra afin de ne pas saturer le NVR. Les
 images sont stockées dans `plugins/dahua/data/snapshots` et les plus anciennes
-sont supprimées automatiquement, selon le nombre réglé dans la configuration.
+sont supprimées automatiquement, selon le nombre réglé dans la configuration,
+et de toute façon au-delà de la **durée de conservation maximale** (7 jours par
+défaut, voir [Configuration du plugin](#configuration-du-plugin)). La dernière
+capture de chaque caméra, et celle que désigne sa commande *Fichier de
+l'image*, sont toujours gardées.
 
 Le bouton **Capturer une image maintenant**, dans l'onglet de la caméra,
 déclenche une capture et affiche le résultat immédiatement. C'est le moyen le
@@ -282,6 +286,10 @@ valeurs par défaut (300 et 30), comptez une cinquantaine de méga-octets par
 caméra concernée. Le budget est global, toutes règles confondues : dix règles se
 partagent les 300 dossiers, elles ne les multiplient pas.
 
+Par-dessus ces quotas, la **durée de conservation maximale** (7 jours par
+défaut) supprime toute alerte plus ancienne, quel que soit son rang — sauf la
+dernière de chaque règle, que montre sa tuile. 0 la désactive.
+
 La purge tourne à la minute, et non à l'écriture : une caméra devenue muette n'y
 laisse rien traîner.
 
@@ -320,6 +328,7 @@ motorisées, et le preset doit exister dans le NVR.
 | Alertes conservées | nombre total de dossiers d'alerte gardés, toutes règles confondues. |
 | Alertes conservées en pleine résolution | au-delà de ce rang, il ne reste que les vignettes et la description. |
 | Pleine résolution garantie pendant (jours) | une alerte plus récente garde sa pleine résolution quel que soit son rang. |
+| Durée de conservation maximale (jours) | captures et dossiers d'alerte plus anciens sont supprimés, quels que soient les nombres réglés au-dessus (7 par défaut, 0 désactive). Restent toujours la dernière capture de chaque caméra, celle que désigne sa commande *Fichier de l'image*, et la dernière alerte de chaque règle. Les alertes sont vérifiées chaque minute, les captures chaque heure. |
 
 Le port d'écoute local n'est jamais exposé à l'extérieur : le démon n'écoute que
 sur la boucle locale, et chaque ordre est signé par la clé API du plugin.
@@ -452,6 +461,53 @@ dès que l'expression redevient exploitable.
 Pour désarmer complètement une règle, décochez « Activer » en haut de sa page —
 un scénario peut le faire aussi. Une règle déclenchée retombe proprement au
 moment où on la désactive, actions de retour comprises.
+
+#### Délai de confirmation
+
+Les caméras voient souvent les occupants avant que la présence ne les
+reconnaisse : quelques secondes pendant lesquelles la condition d'armement est
+encore vraie, et une alerte « Intrusion » part au retour de la maison.
+
+Le champ **Délai de confirmation (s)** retient les *Actions au déclenchement* ce
+nombre de secondes (30 est un bon point de départ, de 0 à 300), puis
+**réévalue la condition d'armement** :
+
+- toujours vraie : la règle se déclenche pour de bon. *Déclenchée* passe à 1, la
+  durée de maintien démarre, les actions partent. Journal : « confirmée après
+  30,0 s : condition d'armement toujours remplie, actions jouées » ;
+- devenue fausse : **rien ne part**, *Déclenchée* ne passe pas à 1. Le journal
+  l'indique en info (« annulée après 30,0 s : condition d'armement retombée
+  pendant le délai de confirmation, aucune action jouée »), et *Détail du
+  déclenchement* comme la tuile de l'alerte portent « annulée ». Le dossier
+  d'alerte, lui, reste dans l'historique, marqué **annulée** : les caméras ont
+  bien vu quelqu'un.
+
+Détails :
+
+- le dossier d'alerte est ouvert **tout de suite**, images du moment de la
+  détection et capture fraîche comprises ; seules les actions attendent ;
+- *Déclenchée* ne passe à 1 **qu'à la confirmation**, juste avant les actions :
+  un scénario déclenché sur elle ne notifie donc pas une alerte annulée ;
+- pendant le délai, la temporisation empêche un second déclenchement. Une
+  alerte **annulée ne consomme pas la temporisation** : elle est rendue, pour
+  qu'une vraie intrusion qui suivrait ne soit pas ignorée si la condition
+  redevient vraie. Tant qu'elle reste fausse, la règle refuse de toute façon de
+  se déclencher ;
+- avec *Attendre la capture fraîche avant d'agir*, les deux attentes se
+  superposent : les actions partent au terme du délai de confirmation, la photo
+  étant presque toujours arrivée entre-temps ;
+- réinitialiser ou désactiver la règle pendant le délai **annule** l'alerte :
+  c'est un désarmement ;
+- sans condition d'armement, le délai est sans effet : il n'y aurait rien à
+  confirmer ;
+- *Tester* attend aussi le délai, et la page le rappelle ;
+- l'attente est inscrite dans le dossier de l'alerte et portée par un
+  processus détaché : le démon et les autres règles continuent de travailler
+  pendant ces trente secondes, et un redémarrage de Jeedom est rattrapé comme
+  pour l'attente de la photo.
+
+0 (par défaut) garde le comportement d'origine : les actions partent au
+déclenchement.
 
 ### Les actions
 

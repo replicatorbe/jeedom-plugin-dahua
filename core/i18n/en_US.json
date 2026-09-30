@@ -96,7 +96,8 @@
         "Invisibles sur le dashboard tant qu'ils ne sont rattachés à aucun objet. Renseignez « Objet parent » sur le NVR : ses caméras en hériteront au prochain enregistrement.": "Invisible on the dashboard as long as they belong to no object. Set \"Parent object\" on the NVR: its cameras will inherit it on the next save.",
         "caméras injoignables": "cameras unreachable",
         "Le NVR ne voit plus ces caméras : vérifiez leur alimentation et leur câblage. Leurs échecs de capture sont normaux tant qu'elles sont absentes.": "The NVR no longer sees these cameras: check their power supply and their cabling. Their snapshot failures are normal while they are missing.",
-        "Rattrapage des actions différées en échec :": "Recovery of deferred actions failed:"
+        "Rattrapage des actions différées en échec :": "Recovery of deferred actions failed:",
+        "Purge des captures en échec :": "Snapshot purge failed:"
     },
     "plugins/dahua/core/php/jeeDahua.php": {
         "Vous n'êtes pas autorisé à effectuer cette action": "You are not authorized to perform this action",
@@ -278,7 +279,10 @@
         "Délai maximal": "Maximum delay",
         "Secondes, de 1 à 30 ; 10 par défaut. Au-delà, les actions partent sans photo.": "Seconds, 1 to 30; 10 by default. Beyond that, the actions run without a picture.",
         "Les actions partent dès la première capture fraîche enregistrée, ou quand toutes les captures demandées ont échoué, et au plus tard après le délai maximal. Le bouton « Tester » attend de la même façon. Si la durée de maintien est plus courte, le retour au repos attend que ces actions soient parties.": "The actions run as soon as the first fresh snapshot is saved, or when all requested snapshots have failed, and at the latest after the maximum delay. The \"Test\" button waits the same way. If the hold time is shorter, the return to idle waits until these actions have run.",
-        "« Capturer une image fraîche à chaque alerte » est décoché dans la configuration du plugin : il n'y a rien à attendre, les actions partent immédiatement.": "\"Take a fresh snapshot on every alert\" is unchecked in the plugin configuration: there is nothing to wait for, the actions run immediately."
+        "« Capturer une image fraîche à chaque alerte » est décoché dans la configuration du plugin : il n'y a rien à attendre, les actions partent immédiatement.": "\"Take a fresh snapshot on every alert\" is unchecked in the plugin configuration: there is nothing to wait for, the actions run immediately.",
+        "Délai de confirmation (s)": "Confirmation delay (s)",
+        "Au déclenchement, les actions sont retenues ce nombre de secondes, puis la condition d'armement est réévaluée. Si elle est devenue fausse entre-temps, par exemple parce que la présence a reconnu les occupants quelques secondes après les caméras, aucune action ne part et « Déclenchée » ne passe pas à 1.": "On trigger, the actions are held back for this many seconds, then the arming condition is re-evaluated. If it has become false in the meantime, for instance because presence detection recognised the occupants a few seconds after the cameras, no action runs and \"Triggered\" does not go to 1.",
+        "De 0 à 300 ; 0 par défaut, les actions partent sans délai. Sans condition d'armement, sans effet. Le dossier d'alerte est créé tout de suite et reste dans l'historique, marqué « annulée » si la condition est retombée ; la temporisation n'est alors pas consommée. « Déclenchée » passe à 1 à la confirmation, juste avant les actions.": "0 to 300; 0 by default, the actions run without delay. No effect without an arming condition. The alert folder is created straight away and stays in the history, marked \"cancelled\" if the condition dropped; the cooldown is then not used up. \"Triggered\" goes to 1 on confirmation, right before the actions."
     },
     "plugins/dahua/desktop/js/dahua.js": {
         "Enregistrez d'abord l'équipement.": "Save the device first.",
@@ -359,7 +363,9 @@
         "Les caméras désactivées ne sont pas comptées.": "Disabled cameras are not counted.",
         "Dernière détection correspondante reçue": "Last matching detection received",
         "détection en cours": "detection in progress",
-        "fin de la détection": "end of the detection"
+        "fin de la détection": "end of the detection",
+        "Règle déclenchée, les actions partiront dans": "Rule triggered, the actions will run in",
+        "si la condition d\\'armement est toujours remplie": "if the arming condition is still met"
     },
     "plugins/dahua/plugin_info/configuration.php": {
         "Démon": "Daemon",
@@ -389,7 +395,11 @@
         "Pleine résolution garantie pendant (jours)": "Full resolution guaranteed for (days)",
         "Toute alerte plus récente que ce nombre de jours garde sa pleine résolution, quel que soit son rang : une règle bavarde ne peut plus priver d'agrandissement les alertes de la veille. 0 désactive cette garantie, seul le rang compte alors. 3 par défaut. Sans effet si le réglage précédent vaut 0. Le nombre total d'alertes conservées borne toujours la place occupée.": "Any alert more recent than this number of days keeps its full resolution, whatever its rank: a chatty rule can no longer deprive the previous day's alerts of their enlargement. 0 disables this guarantee, only the rank then counts. 3 by default. No effect if the previous setting is 0. The total number of alerts kept still bounds the space used.",
         "Clé d'accès aux images": "Image access key",
-        "Mot de passe en authentification HTTP Basic (utilisateur libre) pour lire la commande « Adresse de l'image (accès par clé) » sans session Jeedom, par exemple depuis le widget caméra de JeedomConnect. Ne donne accès qu'aux images.": "HTTP Basic authentication password (any user name) to read the \"Image address (key access)\" command without a Jeedom session, for instance from the JeedomConnect camera widget. Only grants access to images."
+        "Mot de passe en authentification HTTP Basic (utilisateur libre) pour lire la commande « Adresse de l'image (accès par clé) » sans session Jeedom, par exemple depuis le widget caméra de JeedomConnect. Ne donne accès qu'aux images.": "HTTP Basic authentication password (any user name) to read the \"Image address (key access)\" command without a Jeedom session, for instance from the JeedomConnect camera widget. Only grants access to images.",
+        "Conservation": "Retention",
+        "Durée de conservation maximale (jours)": "Maximum retention (days)",
+        "Captures et dossiers d'alerte plus anciens sont supprimés, quels que soient les nombres réglés plus haut. Restent toujours la dernière capture de chaque caméra, celle que désigne sa commande « Fichier de l'image », et la dernière alerte de chaque règle, celle que montre sa tuile. Alertes vérifiées chaque minute, captures chaque heure. 0 désactive ; 7 par défaut ; une valeur vide ou hors bornes revient au défaut.": "Older snapshots and alert folders are deleted, whatever the numbers set above. The latest snapshot of each camera, the one its \"Image file\" command points to, and the latest alert of each rule, the one its tile shows, are always kept. Alerts are checked every minute, snapshots every hour. 0 disables it; 7 by default; an empty or out-of-range value falls back to the default.",
+        "Les plus anciennes sont supprimées automatiquement. Voir aussi la durée de conservation plus bas.": "The oldest ones are deleted automatically. See also the maximum retention below."
     },
     "plugins/dahua/core/class/dahuaRule.class.php": {
         "corrélation ignorée, temporisation en cours": "correlation ignored, cooldown in progress",
@@ -445,7 +455,19 @@
         "s de retard": "s delay",
         "attente interrompue, actions jouées sans attendre la capture": "wait interrupted, actions run without waiting for the snapshot",
         "actions jouées après": "actions run after",
-        "règle ramenée au repos pendant l'attente de la capture, actions jouées sans elle": "rule returned to idle while waiting for the snapshot, actions run without it"
+        "règle ramenée au repos pendant l'attente de la capture, actions jouées sans elle": "rule returned to idle while waiting for the snapshot, actions run without it",
+        "actions différées de": "actions deferred by",
+        "le temps de confirmer la condition d'armement": "to confirm the arming condition",
+        "et d'attendre la capture fraîche": "and to wait for the fresh snapshot",
+        "délai de confirmation ignoré : aucun dossier d'alerte pour l'inscrire, actions jouées sans attendre": "confirmation delay ignored: no alert folder to record it in, actions run without waiting",
+        "confirmée après": "confirmed after",
+        "condition d'armement toujours remplie, actions jouées": "arming condition still met, actions run",
+        "sans capture fraîche": "without fresh snapshot",
+        "annulée après": "cancelled after",
+        "aucune action jouée": "no action run",
+        "annulée :": "cancelled:",
+        "condition d'armement retombée pendant le délai de confirmation": "arming condition dropped during the confirmation delay",
+        "règle ramenée au repos pendant le délai de confirmation": "rule released during the confirmation delay"
     },
     "plugins/dahua/core/class/dahuaAlert.class.php": {
         "Racine du plugin introuvable": "Plugin root folder not found",
@@ -471,7 +493,10 @@
         "capture indisponible": "snapshot unavailable",
         "n'a pas la commande « Images de l'alerte » : enregistrez la règle pour la créer.": "has no \"Alert images\" command: save the rule to create it.",
         "Dossier d'alerte non supprimé :": "Alert folder not deleted:",
-        "Actions différées non jouées : description d'alerte non enregistrée": "Deferred actions not run: alert description not saved"
+        "Actions différées non jouées : description d'alerte non enregistrée": "Deferred actions not run: alert description not saved",
+        "annulée :": "cancelled:",
+        "captures de plus de": "snapshots older than",
+        "jours supprimées": "days deleted"
     },
     "plugins/dahua/desktop/php/alerts.php": {
         "401 - Accès non autorisé": "401 - Unauthorized access",
@@ -507,7 +532,8 @@
         "Plus anciennes": "Older",
         "Plus récentes": "Newer",
         "plus récentes, et toutes celles des": "most recent, and all those of the last",
-        "derniers jours, avec leurs images en pleine résolution ; au-delà il ne reste que les vignettes.": "days, with their full resolution images; beyond that only the thumbnails remain."
+        "derniers jours, avec leurs images en pleine résolution ; au-delà il ne reste que les vignettes.": "days, with their full resolution images; beyond that only the thumbnails remain.",
+        "annulée, aucune action jouée": "cancelled, no action run"
     },
     "core/template/dashboard/cmd.info.string.dahua.html": {
         "Affiche durée ou date de la valeur": "Displays duration or date of the value",

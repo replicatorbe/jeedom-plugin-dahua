@@ -69,7 +69,7 @@ if (!isConnect('admin')) {
 				<input class="configKey form-control" data-l1key="snapshot_keep" placeholder="50">
 			</div>
 			<div class="col-md-5">
-				<span class="help-block" style="margin:0;">{{Les plus anciennes sont supprimées automatiquement.}}</span>
+				<span class="help-block" style="margin:0;">{{Les plus anciennes sont supprimées automatiquement. Voir aussi la durée de conservation plus bas.}}</span>
 			</div>
 		</div>
 	</fieldset>
@@ -119,6 +119,19 @@ if (!isConnect('admin')) {
 			</div>
 			<div class="col-md-4">
 				<span class="help-block" style="margin:0;">{{Mot de passe en authentification HTTP Basic (utilisateur libre) pour lire la commande « Adresse de l'image (accès par clé) » sans session Jeedom, par exemple depuis le widget caméra de JeedomConnect. Ne donne accès qu'aux images.}}</span>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset>
+		<legend><i class="fas fa-broom"></i> {{Conservation}}</legend>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Durée de conservation maximale (jours)}}</label>
+			<div class="col-md-2">
+				<input type="number" min="0" max="5000" step="1" class="configKey form-control" data-l1key="max_age_days" placeholder="7">
+			</div>
+			<div class="col-md-5">
+				<span class="help-block" style="margin:0;">{{Captures et dossiers d'alerte plus anciens sont supprimés, quels que soient les nombres réglés plus haut. Restent toujours la dernière capture de chaque caméra, celle que désigne sa commande « Fichier de l'image », et la dernière alerte de chaque règle, celle que montre sa tuile. Alertes vérifiées chaque minute, captures chaque heure. 0 désactive ; 7 par défaut ; une valeur vide ou hors bornes revient au défaut.}}</span>
 			</div>
 		</div>
 	</fieldset>

@@ -385,6 +385,14 @@ $dahuaNow = time();
 					echo ' <span class="label label-default" title="{{Les images en pleine résolution de cette alerte ont été purgées.}}">{{vignettes seules}}</span>';
 				}
 
+				/* Délai de confirmation : les caméras ont vu quelqu'un, mais la
+				 * condition d'armement est retombée avant que les actions ne
+				 * partent. Sans ce repère, l'alerte passerait pour une intrusion
+				 * dont personne n'a été prévenu. */
+				if (!empty($dahuaMeta['cancelled'])) {
+					echo ' <span class="label label-warning" title="' . $dahuaEsc($dahuaMeta['cancelled']) . '">{{annulée, aucune action jouée}}</span>';
+				}
+
 				if (isset($dahuaMeta['detail']) && $dahuaMeta['detail'] != '') {
 					echo '<div class="dahuaAlertDetail">' . $dahuaEsc($dahuaMeta['detail']) . '</div>';
 				}

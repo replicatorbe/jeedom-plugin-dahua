@@ -111,7 +111,10 @@ try {
         // d'armement comprises : un test qui les contournerait ne prouverait rien.
         dahuaRule::test($rule);
         $detail = $rule->getCmd('info', 'detail');
-        ajax::success(array('detail' => is_object($detail) ? $detail->execCmd() : ''));
+        /* Avec un délai de confirmation, rien n'est encore joué : la page doit
+         * le dire plutôt qu'annoncer des actions qui partiront peut-être. */
+        ajax::success(array('detail' => is_object($detail) ? $detail->execCmd() : '',
+                            'confirm' => dahuaRule::confirmation($rule)));
     }
 
     if (init('action') == 'resetRule') {

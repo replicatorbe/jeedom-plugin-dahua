@@ -179,7 +179,10 @@ Enable **Capture on every detection** in the plugin configuration to take an
 image at the start of every event. The rate is capped at one capture every
 10 seconds per camera so the NVR is not flooded. Images are stored in
 `plugins/dahua/data/snapshots` and the oldest ones are deleted automatically,
-according to the number set in the configuration.
+according to the number set in the configuration, and in any case beyond the
+**maximum retention** (7 days by default, see
+[Plugin configuration](#plugin-configuration)). The latest snapshot of each
+camera, and the one its *Image file* command points to, are always kept.
 
 The **Take a snapshot now** button, in the camera tab, triggers a capture and
 displays the result straight away. It is the quickest way to check that the HTTP
@@ -276,6 +279,10 @@ default values (300 and 30), count about fifty megabytes per camera involved.
 The budget is global, all rules taken together: ten rules share the 300
 folders, they do not multiply them.
 
+On top of these quotas, the **maximum retention** (7 days by default) deletes
+any older alert, whatever its rank — except the latest of each rule, shown by
+its tile. 0 disables it.
+
 The purge runs every minute, and not on write: a camera gone quiet leaves
 nothing lying around.
 
@@ -313,6 +320,7 @@ and the preset must exist in the NVR.
 | Alerts kept | total number of alert folders kept, all rules taken together. |
 | Alerts kept at full resolution | beyond that rank, only the thumbnails and the description remain. |
 | Full resolution guaranteed for (days) | a more recent alert keeps its full resolution whatever its rank. |
+| Maximum retention (days) | older snapshots and alert folders are deleted, whatever the numbers set above (7 by default, 0 disables it). The latest snapshot of each camera, the one its *Image file* command points to, and the latest alert of each rule are always kept. Alerts are checked every minute, snapshots every hour. |
 
 The local listening port is never exposed to the outside: the daemon only
 listens on the loopback interface, and every order is signed with the plugin API
@@ -437,6 +445,42 @@ unnoticed. The message clears itself as soon as the expression works again.
 To disarm a rule entirely, uncheck "Enable" at the top of its page — a scenario
 can do it too. A triggered rule falls back cleanly at the moment it is disabled,
 release actions included.
+
+#### Confirmation delay
+
+Cameras often see the occupants before presence detection recognises them: a
+few seconds during which the arming condition is still true, and an
+"Intrusion" alert goes off when you come home.
+
+The **Confirmation delay (s)** field holds the *Trigger actions* back for that
+many seconds (30 is a good start, 0 to 300), then **re-evaluates the arming
+condition**:
+
+- still true: the rule really triggers. *Triggered* goes to 1, the hold time
+  starts, the actions run;
+- now false: **nothing runs**, *Triggered* does not go to 1. The log says so at
+  info level, and *Trigger detail* as well as the alert tile read "cancelled".
+  The alert folder stays in the history, marked **cancelled**: the cameras did
+  see someone.
+
+Details:
+
+- the alert folder is opened **straight away**, detection images and fresh
+  snapshot included; only the actions wait;
+- *Triggered* goes to 1 **only on confirmation**, right before the actions, so
+  a scenario triggered on it does not notify a cancelled alert;
+- during the delay the cooldown prevents a second trigger. A **cancelled alert
+  does not use up the cooldown**: it is given back, so that a real intrusion
+  that follows is not ignored if the condition becomes true again;
+- with *Wait for the fresh snapshot before acting*, both waits overlap;
+- resetting or disabling the rule during the delay **cancels** the alert;
+- without an arming condition the delay has no effect;
+- *Test* waits for the delay too;
+- the wait is recorded in the alert folder and carried by a detached process:
+  the daemon and the other rules keep working, and a Jeedom restart is caught
+  up as for the snapshot wait.
+
+0 (the default) keeps the original behaviour.
 
 ### Actions
 
