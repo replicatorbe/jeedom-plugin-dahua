@@ -20,6 +20,7 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
  * plugin : les classes annexes doivent être incluses explicitement. */
 require_once __DIR__ . '/dahuaRule.class.php';
 require_once __DIR__ . '/dahuaAlert.class.php';
+require_once __DIR__ . '/dahuaVision.class.php';
 
 class dahua extends eqLogic {
 
@@ -487,6 +488,36 @@ class dahua extends eqLogic {
             /* Délai de confirmation : 0 (vide) garde le comportement d'origine,
              * sans migration. Borné comme le moteur le borne. */
             $this->setConfiguration('confirm_delay', dahuaRule::confirmDelay($this));
+
+            /*
+             * Confirmation IA : cochée sans attente de capture ni délai de
+             * confirmation, elle serait sans effet car l'IA n'a pas d'image à
+             * analyser et le moteur joue les actions tout de suite. On force
+             * alors l'attente de la capture fraîche. Décocher IA n'enlève
+             * jamais wait_live automatiquement : l'utilisateur peut vouloir
+             * attendre la photo pour la notification sans passer par l'IA.
+             */
+            $aiConfirm = ((int) $this->getConfiguration('ai_confirm', 0) == 1) ? 1 : 0;
+            $this->setConfiguration('ai_confirm', $aiConfirm);
+            if ($aiConfirm == 1
+                && (int) $this->getConfiguration('wait_live', 0) != 1
+                && (int) $this->getConfiguration('confirm_delay', 0) == 0) {
+                $this->setConfiguration('wait_live', 1);
+                $this->setConfiguration('wait_live_max', dahuaRule::waitLiveMax($this));
+            }
+            /* Seuil de confiance borné dans [0, 100], défaut dans aiReject. */
+            $rawMin = $this->getConfiguration('ai_min_confidence', '');
+            if ($rawMin !== '' && $rawMin !== null) {
+                $this->setConfiguration('ai_min_confidence', max(0, min(100, (int) $rawMin)));
+            }
+            /* Classes IA : relues puis réécrites via le filtre canonique (sans
+             * doublon, sans classe inconnue, sans « indetermine »). Si rien de
+             * valide, le champ est effacé et aiReject retombe sur son défaut. */
+            $validClasses = dahuaRule::aiClasses($this);
+            $rawClasses = $this->getConfiguration('ai_classes', '');
+            if ($rawClasses !== '' && $rawClasses !== null) {
+                $this->setConfiguration('ai_classes', implode(',', $validClasses));
+            }
             $scope = $this->getConfiguration('camera_scope');
             if (!in_array($scope, array(dahuaRule::SCOPE_ANY, dahuaRule::SCOPE_SAME, dahuaRule::SCOPE_DISTINCT))) {
                 $this->setConfiguration('camera_scope', dahuaRule::SCOPE_ANY);

@@ -600,6 +600,16 @@ function saveEqLogic(_eqLogic) {
     document.querySelectorAll('#div_dahuaRuleActions .dahuaRuleAction').getJeeValues('.expressionAttr')
   _eqLogic.configuration.actions_end =
     document.querySelectorAll('#div_dahuaRuleActionsEnd .dahuaRuleAction').getJeeValues('.expressionAttr')
+  /* Classes IA cochées : les data-lXkey ne descendent pas à un sous-attribut
+     par case. On relève les cases cochées et on écrit la liste CSV. */
+  var aiBoxes = document.querySelectorAll('.dahuaRuleBlock .dahuaAiClass')
+  var aiPicked = []
+  for (var ai = 0; ai < aiBoxes.length; ai++) {
+    if (aiBoxes[ai].checked) {
+      aiPicked.push(aiBoxes[ai].value)
+    }
+  }
+  _eqLogic.configuration.ai_classes = aiPicked.join(',')
   return _eqLogic
 }
 
@@ -661,7 +671,7 @@ function printEqLogic(_eqLogic) {
 
   /* Les valeurs par défaut sont appliquées par preSave() côté serveur, mais un
      champ vide ne dit pas laquelle : on les affiche. */
-  var defaults = { window: '15', cooldown: '30', hold: '10', threshold: '2', wait_live_max: '10', confirm_delay: '0' }
+  var defaults = { window: '15', cooldown: '30', hold: '10', threshold: '2', wait_live_max: '10', confirm_delay: '0', ai_min_confidence: '60' }
   for (var key in defaults) {
     var field = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="' + key + '"]')
     if (field !== null && field.value === '') {
@@ -671,6 +681,24 @@ function printEqLogic(_eqLogic) {
   var scope = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="camera_scope"]')
   if (scope !== null && scope.value === '') {
     scope.value = 'any'
+  }
+
+  /* Classes IA : les cases ne sont pas des .eqLogicAttr, le coeur ne les
+     restaure pas. Vide côté config = défaut (humain, véhicule). */
+  var aiRaw = isset(configuration.ai_classes) ? configuration.ai_classes : ''
+  var aiList
+  if (typeof aiRaw === 'string') {
+    aiList = (aiRaw === '') ? ['humain', 'vehicule'] : aiRaw.split(',')
+  } else {
+    aiList = Array.isArray(aiRaw) ? aiRaw : ['humain', 'vehicule']
+  }
+  var aiPicked = {}
+  for (var ap = 0; ap < aiList.length; ap++) {
+    aiPicked[String(aiList[ap]).trim().toLowerCase()] = true
+  }
+  var aiBoxes = document.querySelectorAll('.dahuaRuleBlock .dahuaAiClass')
+  for (var ab = 0; ab < aiBoxes.length; ab++) {
+    aiBoxes[ab].checked = !!aiPicked[aiBoxes[ab].value]
   }
 
   dahuaToggleThreshold()
@@ -852,6 +880,20 @@ dahuaContainer.addEventListener('change', function (event) {
   }
   if (event.target.closest('#sel_dahuaRuleTemplate')) {
     dahuaApplyTemplate(event.target.value)
+    return
+  }
+  /* La confirmation IA sans attente de capture ni délai de confirmation ne
+     servirait à rien : l'IA n'a pas d'image à analyser. Cocher l'option
+     active alors l'attente de la capture fraîche, visible à l'utilisateur. */
+  if (event.target.matches('.dahuaRuleBlock .eqLogicAttr[data-l2key="ai_confirm"]')) {
+    if (event.target.checked) {
+      var waitLive = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="wait_live"]')
+      var confirmDelayEl = document.querySelector('.dahuaRuleBlock .eqLogicAttr[data-l2key="confirm_delay"]')
+      var confirmDelay = (confirmDelayEl !== null) ? parseInt(confirmDelayEl.value, 10) || 0 : 0
+      if (waitLive !== null && !waitLive.checked && confirmDelay === 0) {
+        waitLive.checked = true
+      }
+    }
   }
 })
 

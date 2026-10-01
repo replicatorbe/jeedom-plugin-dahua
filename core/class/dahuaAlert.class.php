@@ -1151,6 +1151,33 @@ class dahuaAlert {
         }, $_republish ? self::publisher($_id) : null) !== null;
     }
 
+    /*
+     * Trace de l'analyse par le classifieur de vision dans le meta.json de
+     * l'alerte. Permet un audit après coup — quelle catégorie, quelle
+     * confiance, combien de temps — et une consultation depuis l'historique.
+     * Rien de la décision prise par la règle n'y est écrit : seul le brut.
+     */
+    public static function setAi($_id, $_result) {
+        if (!is_array($_result)) {
+            return false;
+        }
+        $trace = array(
+            'ok'          => !empty($_result['ok']),
+            'categorie'   => isset($_result['categorie']) ? (string) $_result['categorie'] : '',
+            'confiance'   => isset($_result['confiance']) ? (int) $_result['confiance'] : 0,
+            'description' => isset($_result['description']) ? (string) $_result['description'] : '',
+            'indices'     => isset($_result['indices']) && is_array($_result['indices']) ? array_values($_result['indices']) : array(),
+            'erreur'      => isset($_result['erreur']) ? (string) $_result['erreur'] : '',
+            'modele'      => isset($_result['modele']) ? (string) $_result['modele'] : '',
+            'duree_ms'    => isset($_result['duree_ms']) ? (int) $_result['duree_ms'] : 0,
+            'at'          => time(),
+        );
+        return self::updateMeta($_id, function ($_meta) use ($trace) {
+            $_meta['ai'] = $trace;
+            return $_meta;
+        }) !== null;
+    }
+
     /* =============================================================== WIDGET */
 
     /*

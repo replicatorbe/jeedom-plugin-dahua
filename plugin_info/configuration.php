@@ -124,6 +124,73 @@ if (!isConnect('admin')) {
 	</fieldset>
 
 	<fieldset>
+		<legend><i class="fas fa-brain"></i> {{Confirmation IA (optionnelle)}}</legend>
+		<div class="form-group">
+			<div class="col-md-offset-1 col-md-10">
+				<span class="help-block">{{Pour les règles où elle est cochée, chaque alerte envoie la capture fraîche au service ci-dessous, qui dit si la scène montre un humain, un véhicule, un animal, un insecte devant l'objectif, de la végétation ou rien. Les règles n'arment que si la catégorie fait partie de celles qu'elles acceptent. Utile pour les caméras sans détection humaine ni véhicule native, où un papillon de nuit volant devant l'IR satisfait motion + franchissement de ligne. Les images quittent votre réseau : avec OpenAI elles ne servent pas à entraîner les modèles mais sont conservées jusqu'à trente jours ; un modèle local compatible (Ollama) les garde chez vous. En cas de service injoignable ou de pas de réponse, l'alerte joue normalement (fail-open) : jamais d'alarme muette.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Clé API}}</label>
+			<div class="col-md-4">
+				<input type="password" class="configKey form-control" data-l1key="ai_apikey" autocomplete="new-password" placeholder="sk-…" />
+			</div>
+			<div class="col-md-4">
+				<span class="help-block" style="margin:0;">{{Clé secrète du service. Vide désactive la confirmation IA sur toutes les règles, qu'elles l'aient cochée ou non.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Adresse du service}}</label>
+			<div class="col-md-4">
+				<input class="configKey form-control" data-l1key="ai_base_url" placeholder="https://api.openai.com/v1" />
+			</div>
+			<div class="col-md-4">
+				<span class="help-block" style="margin:0;">{{Toute API compatible OpenAI convient, chemin de version compris : https://api.openai.com/v1, ou http://192.168.1.20:11434/v1 pour un Ollama local.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Modèle}}</label>
+			<div class="col-md-4">
+				<input class="configKey form-control" data-l1key="ai_model" placeholder="gpt-5.4-nano" />
+			</div>
+			<div class="col-md-4">
+				<span class="help-block" style="margin:0;">{{Il doit savoir lire des images. Le petit modèle d'OpenAI répond en deux secondes environ, pour une fraction de centime par alerte.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Qualité d'image envoyée}}</label>
+			<div class="col-md-4">
+				<select class="configKey form-control" data-l1key="ai_detail">
+					<option value="high">{{Haute (recommandé)}}</option>
+					<option value="auto">{{Automatique}}</option>
+					<option value="low">{{Basse (économique)}}</option>
+				</select>
+			</div>
+			<div class="col-md-4">
+				<span class="help-block" style="margin:0;">{{En basse qualité, l'image est réduite à 512 pixels et une silhouette au loin devient invisible. Haute recommandée pour les caméras extérieures.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Délai maximal (s)}}</label>
+			<div class="col-md-2">
+				<input class="configKey form-control" data-l1key="ai_timeout" type="number" min="5" max="60" placeholder="12" />
+			</div>
+			<div class="col-md-6">
+				<span class="help-block" style="margin:0;">{{De 5 à 60 secondes, 12 par défaut. Passé ce délai sans réponse, la règle joue sans analyse. Doit rester inférieur au « Délai de confirmation » des règles qui utilisent l'IA.}}</span>
+			</div>
+		</div>
+		<div class="form-group">
+			<label class="col-md-4 control-label">{{Contexte des lieux (facultatif)}}</label>
+			<div class="col-md-7">
+				<textarea class="configKey form-control" data-l1key="ai_context" rows="2" maxlength="500" placeholder="{{Un chat du quartier passe souvent devant la caméra NORD. Les voisins garent leur camionnette en face.}}"></textarea>
+			</div>
+			<div class="col-md-1">
+				<span class="help-block" style="margin:0;">{{Indication passée au modèle, 500 caractères maximum. Ni consigne, ni alibi.}}</span>
+			</div>
+		</div>
+	</fieldset>
+
+	<fieldset>
 		<legend><i class="fas fa-broom"></i> {{Conservation}}</legend>
 		<div class="form-group">
 			<label class="col-md-4 control-label">{{Durée de conservation maximale (jours)}}</label>

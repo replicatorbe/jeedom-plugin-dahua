@@ -516,6 +516,51 @@ sendVarToJS('dahuaEvents', $dahuaEvents);
 							</div>
 						</div>
 
+						<legend><i class="fas fa-brain"></i> {{Confirmation par IA}}</legend>
+						<?php
+						$dahuaAiKey = trim((string) config::byKey('ai_apikey', 'dahua', ''));
+						?>
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Activer la confirmation IA}}
+								<sup><i class="fas fa-question-circle tooltips" title="{{À l'alerte, la capture fraîche est envoyée au service de vision configuré dans la page du plugin, qui range la scène dans une catégorie fermée. Si la catégorie fait partie de celles qui sont cochées ci-dessous et que la confiance atteint le seuil, les actions partent ; sinon l'alerte est marquée annulée. En cas de service injoignable ou de pas de réponse, les actions partent comme si l'option n'était pas cochée — jamais d'alarme muette à cause de l'IA.}}"></i></sup>
+							</label>
+							<div class="col-sm-1">
+								<input type="checkbox" class="eqLogicAttr" data-l1key="configuration" data-l2key="ai_confirm">
+							</div>
+							<div class="col-sm-8">
+								<span class="help-block" style="margin:0;">{{Nécessite une capture fraîche. Sans « Attendre la capture fraîche » ni « Délai de confirmation », l'IA n'a pas le temps d'être consultée et l'option reste sans effet.}}</span>
+								<?php if ($dahuaAiKey === '') { ?>
+								<span class="help-block text-warning" style="margin:5px 0 0 0;"><i class="fas fa-exclamation-triangle"></i> {{Aucune clé API n'est renseignée dans la configuration du plugin : la confirmation IA est désactivée partout.}}</span>
+								<?php } ?>
+							</div>
+						</div>
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Catégories qui font jouer l'alerte}}
+								<sup><i class="fas fa-question-circle tooltips" title="{{Les actions ne partent que si la catégorie rendue par le modèle fait partie des cases cochées. Humain et Véhicule par défaut ; cocher Animal est utile pour une caméra de jardin où un gros chien du voisin suffit à prévenir.}}"></i></sup>
+							</label>
+							<div class="col-sm-8">
+								<div class="dahuaAiClasses">
+									<label class="checkbox-inline"><input type="checkbox" class="dahuaAiClass" value="humain"> {{Humain}}</label>
+									<label class="checkbox-inline"><input type="checkbox" class="dahuaAiClass" value="vehicule"> {{Véhicule}}</label>
+									<label class="checkbox-inline"><input type="checkbox" class="dahuaAiClass" value="animal"> {{Animal}}</label>
+									<label class="checkbox-inline"><input type="checkbox" class="dahuaAiClass" value="insecte_ou_debris"> {{Insecte / débris}}</label>
+									<label class="checkbox-inline"><input type="checkbox" class="dahuaAiClass" value="vegetation"> {{Végétation / ombre}}</label>
+									<label class="checkbox-inline"><input type="checkbox" class="dahuaAiClass" value="vide"> {{Vide}}</label>
+								</div>
+							</div>
+						</div>
+						<div class="form-group">
+							<label class="col-sm-3 control-label">{{Confiance minimale}}
+								<sup><i class="fas fa-question-circle tooltips" title="{{Pourcentage de 0 à 100 que doit atteindre la confiance rendue par le modèle. Une catégorie correcte rendue avec une confiance plus basse laisse jouer l'alerte quand même (dans le doute, on prévient).}}"></i></sup>
+							</label>
+							<div class="col-sm-2">
+								<input type="number" min="0" max="100" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="ai_min_confidence" placeholder="60">
+							</div>
+							<div class="col-sm-7">
+								<span class="help-block" style="margin:0;">{{De 0 à 100 ; 60 par défaut. Plus élevé = moins d'alertes mais plus de faux négatifs. Plus bas = moins de faux négatifs mais l'IA écarte moins souvent.}}</span>
+							</div>
+						</div>
+
 						<legend><i class="fas fa-undo"></i> {{Actions au retour au repos}}</legend>
 						<div class="form-group">
 							<div class="col-sm-offset-1 col-sm-10">

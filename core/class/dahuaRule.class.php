@@ -828,6 +828,31 @@ class dahuaRule {
             return self::confirmDeferred($rule, $_alertId, $claim, $now, $elapsed);
         }
 
+        /* Hors délai de confirmation, la vision IA peut quand même refuser une
+         * alerte quand une capture fraîche est arrivée. Fail-open sur tout le
+         * reste : jamais une alarme muette parce que l'IA n'a pas répondu. */
+        $aiReject = self::aiReject($rule, $_alertId, ($claim['reason'] == 'live'));
+        if ($aiReject !== '') {
+            unset(self::$_states[(int) $rule->getId()]);
+            $state = self::state($rule->getId());
+            $current = ($claim['fired'] > 0 && $state['fired'] == $claim['fired']);
+            log::add('dahua', 'info', $rule->getHumanName() . ' — ' . __('annulée après', __FILE__)
+                   . ' ' . $elapsed . ' s : ' . $aiReject . ', ' . __('aucune action jouée', __FILE__)
+                   . ' (' . $_alertId . ')');
+            if ($current) {
+                $state['fired'] = (int) $claim['fired_before'];
+                $state['until'] = 0;
+                self::saveState($rule->getId(), $state);
+                $meta = dahuaAlert::readMeta($_alertId);
+                $base = (is_array($meta) && isset($meta['detail']) && trim((string) $meta['detail']) !== '')
+                      ? trim((string) $meta['detail']) . ' — ' : '';
+                $rule->checkAndUpdateCmd('detail', $base . __('annulée :', __FILE__) . ' ' . $aiReject);
+                $rule->checkAndUpdateCmd('triggered', 0);
+            }
+            dahuaAlert::markCancelled($_alertId, $aiReject, $current);
+            return $rule;
+        }
+
         switch ($claim['reason']) {
             case 'live':
                 $text = __('capture fraîche enregistrée', __FILE__);
@@ -880,7 +905,16 @@ class dahuaRule {
         $state  = self::state($_rule->getId());
         $current = ($_claim['fired'] > 0 && $state['fired'] == $_claim['fired']);
 
+        /* La vision IA, si elle est demandée et qu'une capture fraîche est
+         * arrivée, peut écarter l'alerte à ce point : les actions ne partent
+         * pas et la règle retombe comme si la condition d'armement s'était
+         * invalidée. Fail-open : service en panne ou sans réponse = joue. */
+        $aiReject = '';
         if ($armed) {
+            $aiReject = self::aiReject($_rule, $_alertId, ($_claim['reason'] == 'live'));
+        }
+
+        if ($armed && $aiReject === '') {
             log::add('dahua', 'info', $_rule->getHumanName() . ' — ' . __('confirmée après', __FILE__)
                    . ' ' . $_elapsed . ' s : ' . __('condition d\'armement toujours remplie, actions jouées', __FILE__)
                    . (($_claim['reason'] == 'timeout') ? ' (' . __('sans capture fraîche', __FILE__) . ')' : ''));
@@ -893,9 +927,13 @@ class dahuaRule {
             return $_rule;
         }
 
-        $reason = $forced
-                ? __('règle ramenée au repos pendant le délai de confirmation', __FILE__)
-                : __('condition d\'armement retombée pendant le délai de confirmation', __FILE__);
+        if ($aiReject !== '') {
+            $reason = $aiReject;
+        } else {
+            $reason = $forced
+                    ? __('règle ramenée au repos pendant le délai de confirmation', __FILE__)
+                    : __('condition d\'armement retombée pendant le délai de confirmation', __FILE__);
+        }
         log::add('dahua', 'info', $_rule->getHumanName() . ' — ' . __('annulée après', __FILE__)
                . ' ' . $_elapsed . ' s : ' . $reason . ', ' . __('aucune action jouée', __FILE__) . ' (' . $_alertId . ')');
         if ($current) {
@@ -903,8 +941,9 @@ class dahuaRule {
             $state['until'] = 0;
             self::saveState($_rule->getId(), $state);
             $meta = dahuaAlert::readMeta($_alertId);
-            $detail = isset($meta['detail']) ? $meta['detail'] : '';
-            $_rule->checkAndUpdateCmd('detail', $detail . ' — ' . __('annulée :', __FILE__) . ' ' . $reason);
+            $base = (is_array($meta) && isset($meta['detail']) && trim((string) $meta['detail']) !== '')
+                  ? trim((string) $meta['detail']) . ' — ' : '';
+            $_rule->checkAndUpdateCmd('detail', $base . __('annulée :', __FILE__) . ' ' . $reason);
         }
         dahuaAlert::markCancelled($_alertId, $reason, $current);
         return $_rule;
@@ -972,6 +1011,143 @@ class dahuaRule {
             return;
         }
         usleep((int) round($_seconds * 1000000));
+    }
+
+    /* ================================================= CONFIRMATION PAR IA */
+
+    /* Classes acceptées par défaut quand une règle ne précise rien : seules
+     * un humain ou un véhicule justifient de jouer l'alerte. Un animal, un
+     * insecte, de la végétation ou une scène vide sont écartés. L'utilisateur
+     * peut élargir, caméra par caméra, via l'option « ai_classes ». */
+    const AI_DEFAULT_CLASSES = array('humain', 'vehicule');
+
+    /* Seuil de confiance minimum (0-100). Un verdict rendu avec moins ne vaut
+     * pas la peine d'écarter une alerte : dans le doute, on joue. */
+    const AI_DEFAULT_MIN_CONFIDENCE = 60;
+
+    /*
+     * Verdict final à appliquer à une alerte en attente :
+     *  - '' : la règle peut jouer ses actions (IA désactivée, pas de capture,
+     *    service indisponible, catégorie acceptée) — fail-open explicite.
+     *  - texte court : raison du refus, écrite dans le journal et dans le
+     *    « détail » de l'alerte. La règle ne joue pas et l'alerte est marquée
+     *    annulée.
+     */
+    public static function aiReject($_rule, $_alertId, $_hasFreshShot) {
+        if ((int) $_rule->getConfiguration('ai_confirm', 0) != 1) {
+            return '';
+        }
+        if (!$_hasFreshShot) {
+            /* Pas d'image à envoyer : jouer sans analyse plutôt que de rater
+             * une vraie intrusion. */
+            return '';
+        }
+        $dir = dahuaAlert::path($_alertId);
+        if ($dir === false) {
+            return '';
+        }
+        /* Un déclenchement par « Tester la règle » n'a rien à montrer d'utile
+         * à l'IA : la capture est quelconque, le but est d'exercer la chaîne
+         * d'actions. Ignorer l'IA ici évite une analyse facturée pour rien et
+         * un faux « écartée par l'IA » qui ferait croire à un bug du test. */
+        $meta = dahuaAlert::readMeta($_alertId);
+        $testLabel = __('Test manuel', __FILE__);
+        if (is_array($meta) && isset($meta['detail'])
+            && (strpos((string) $meta['detail'], 'Test manuel') !== false
+             || strpos((string) $meta['detail'], $testLabel) !== false)) {
+            return '';
+        }
+        $images = dahuaVision::imagesPour($dir);
+        if (empty($images)) {
+            return '';
+        }
+
+        $settings = self::aiSettings();
+        if ($settings['apikey'] === '') {
+            log::add('dahua', 'debug', $_rule->getHumanName() . ' — '
+                   . __('IA demandée mais aucune clé API n\'est renseignée dans la configuration du plugin — règle jouée sans analyse', __FILE__));
+            return '';
+        }
+
+        $result = dahuaVision::analyse($images, $settings);
+        dahuaAlert::setAi($_alertId, $result);
+
+        if (empty($result['ok'])) {
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — '
+                   . __('IA indisponible :', __FILE__) . ' ' . $result['erreur'] . ' — '
+                   . __('règle jouée sans analyse', __FILE__));
+            return '';
+        }
+
+        $classes = self::aiClasses($_rule);
+        $minConf = self::aiMinConfidence($_rule);
+        $categorie = (string) $result['categorie'];
+        $confiance = (int) $result['confiance'];
+
+        $accepte = in_array($categorie, $classes, true) && $confiance >= $minConf;
+        $libelle = $categorie . ' ' . $confiance . '%';
+        if ($result['description'] !== '') {
+            $libelle .= ' — ' . mb_substr($result['description'], 0, 120);
+        }
+
+        if ($accepte) {
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — '
+                   . __('IA confirme :', __FILE__) . ' ' . $libelle);
+            return '';
+        }
+
+        return __('écartée par l\'IA :', __FILE__) . ' ' . $libelle;
+    }
+
+    /* Les paramètres transmis à dahuaVision, lus dans la configuration du
+     * plugin. Tableau simple, sans dépendance au cœur hors config::byKey. */
+    public static function aiSettings() {
+        return array(
+            'apikey'   => trim((string) config::byKey('ai_apikey',   'dahua', '')),
+            'base_url' => trim((string) config::byKey('ai_base_url', 'dahua', '')),
+            'model'    => trim((string) config::byKey('ai_model',    'dahua', '')),
+            'timeout'  => (int)         config::byKey('ai_timeout',  'dahua', 0),
+            'detail'   => trim((string) config::byKey('ai_detail',   'dahua', 'high')),
+            'context'  => trim((string) config::byKey('ai_context',  'dahua', '')),
+            'language' => trim((string) config::byKey('language',    'core',  'fr_FR')),
+        );
+    }
+
+    /* Classes acceptées pour une règle. Stockées en CSV dans la configuration
+     * (plus simple à sauver depuis un multiselect), lues ici en tableau.
+     * « indetermine » est volontairement exclu : c'est le verdict que rend le
+     * modèle quand il ne peut rien conclure, l'accepter comme classe
+     * déclencheuse reviendrait à jouer l'alerte sur toute image noire. */
+    public static function aiClasses($_rule) {
+        $raw = $_rule->getConfiguration('ai_classes', '');
+        if (is_array($raw)) {
+            $items = $raw;
+        } else {
+            $items = ($raw === '' || $raw === null) ? array() : explode(',', (string) $raw);
+        }
+        $classes = array();
+        foreach ($items as $item) {
+            $slug = strtolower(trim((string) $item));
+            if ($slug === '' || $slug === 'indetermine') {
+                continue;
+            }
+            if (in_array($slug, dahuaVision::CATEGORIES, true)) {
+                $classes[] = $slug;
+            }
+        }
+        if (empty($classes)) {
+            return self::AI_DEFAULT_CLASSES;
+        }
+        return array_values(array_unique($classes));
+    }
+
+    /* Seuil de confiance, ramené dans ses bornes. */
+    public static function aiMinConfidence($_rule) {
+        $raw = $_rule->getConfiguration('ai_min_confidence', '');
+        if ($raw === '' || $raw === null) {
+            return self::AI_DEFAULT_MIN_CONFIDENCE;
+        }
+        return max(0, min(100, (int) $raw));
     }
 
     /*
