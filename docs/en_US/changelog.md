@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.10 — 2026-10-10
+
+**Confirming alerts by image analysis**
+
+- New rule option **Enable AI confirmation**, unticked by default. Before the
+  actions run, the alert's images are sent to a vision model, which says what
+  they show: human, vehicle, animal, insect or debris in front of the lens,
+  vegetation or shadow, empty scene. The actions run only if the category is
+  among those ticked in the rule (human and vehicle by default). The alert is
+  only discarded when the model is sure of something else (confidence of at
+  least 60 % by default): a model in doubt lets the alert run. Discarded, it is
+  marked **cancelled**, with the reason.
+- For cameras without human or vehicle detection, where a moth in front of the
+  infrared light was enough to trigger a rule.
+- New plugin section **AI confirmation (optional)**: API key, service URL (any
+  OpenAI-compatible API, `https://api.openai.com/v1` by default, or a local
+  model such as Ollama), model (`gpt-5.4-nano` by default), image quality,
+  maximum delay (12 s by default) and context of the premises. Without a key,
+  the feature is off everywhere.
+- The analysis works on the fresh snapshot: enabling the option ticks *Wait for
+  the fresh snapshot before acting* when the rule has no confirmation delay.
+- Service unreachable, delay exceeded, key missing or refused, no image: the
+  rule runs as without the option. A service outage never silences the alarm.
+  *Test* does not call the service.
+- The images go to the provider you chose, and it bills each analysis. See the
+  documentation.
+- Model instructions tuned for infrared night vision (a white blob with no head
+  or limbs is an insect, not an intruder) and for mixed scenes: a human with a
+  dog is still a human.
+
+**Fix**
+
+- The *Trigger detail* of a cancelled alert no longer starts with a dash when
+  the original detail is empty.
+
 ## 0.9 — 2026-09-30
 
 **No more alerts when coming home**

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.10 — 10/10/2026
+
+**Confirmer les alertes par analyse d'image**
+
+- Nouvelle option de règle **Activer la confirmation IA**, décochée par défaut.
+  Avant que les actions ne partent, les images de l'alerte sont envoyées à un
+  modèle de vision, qui dit ce qu'elles montrent : humain, véhicule, animal,
+  insecte ou débris devant l'objectif, végétation ou ombre, scène vide. Les
+  actions ne partent que si la catégorie fait partie de celles cochées dans la
+  règle (humain et véhicule par défaut). L'alerte n'est écartée que si le
+  modèle est sûr d'autre chose (confiance d'au moins 60 % par défaut) : un
+  modèle qui doute laisse jouer l'alerte. Écartée, elle est marquée **annulée**,
+  avec la raison.
+- Pour les caméras sans détection humain ni véhicule, où un papillon de nuit
+  devant l'infrarouge suffisait à déclencher une règle.
+- Nouvelle section du plugin **Confirmation IA (optionnelle)** : clé API,
+  adresse du service (toute API compatible OpenAI, `https://api.openai.com/v1`
+  par défaut, ou un modèle local comme Ollama), modèle (`gpt-5.4-nano` par
+  défaut), qualité d'image, délai maximal (12 s par défaut) et contexte des
+  lieux. Sans clé, la fonction est coupée partout.
+- L'analyse porte sur la capture fraîche : activer l'option coche *Attendre la
+  capture fraîche avant d'agir* quand la règle n'a pas de délai de
+  confirmation.
+- Service injoignable, délai dépassé, clé absente ou refusée, aucune image : la
+  règle joue comme sans l'option. Une panne du service ne rend jamais l'alarme
+  muette. *Tester* ne consulte pas le service.
+- Les images partent chez le fournisseur choisi, et chaque analyse est facturée
+  par lui. Voir la documentation.
+- Consignes du modèle travaillées pour la vision de nuit infrarouge (une tache
+  blanche sans tête ni membres est un insecte, pas un intrus) et pour les
+  scènes mixtes : un humain accompagné d'un chien reste un humain.
+
+**Correctif**
+
+- *Détail du déclenchement* d'une alerte annulée ne commence plus par un tiret
+  quand le détail d'origine est vide.
+
 ## 0.9 — 30/09/2026
 
 **Ne plus alerter au retour de la maison**

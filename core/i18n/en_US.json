@@ -368,11 +368,11 @@
         "si la condition d\\'armement est toujours remplie": "if the arming condition is still met",
         "Confirmation par IA": "AI confirmation",
         "Activer la confirmation IA": "Enable AI confirmation",
-        "À l'alerte, la capture fraîche est envoyée au service de vision configuré dans la page du plugin, qui range la scène dans une catégorie fermée. Si la catégorie fait partie de celles qui sont cochées ci-dessous et que la confiance atteint le seuil, les actions partent ; sinon l'alerte est marquée annulée. En cas de service injoignable ou de pas de réponse, les actions partent comme si l'option n'était pas cochée — jamais d'alarme muette à cause de l'IA.": "On alert, the fresh snapshot is sent to the vision service configured in the plugin page, which classifies the scene into one of a fixed set of categories. If the category is among those ticked below and the confidence reaches the threshold, the actions run; otherwise the alert is marked as cancelled. If the service is unreachable or does not answer in time, the actions run as if the option were not ticked — never a silent alarm because of AI.",
-        "Nécessite une capture fraîche. Sans « Attendre la capture fraîche » ni « Délai de confirmation », l'IA n'a pas le temps d'être consultée et l'option reste sans effet.": "Needs a fresh snapshot. Without \"Wait for the fresh snapshot\" nor \"Confirmation delay\", AI has no time to be consulted and the option is ineffective.",
+        "À l'alerte, la capture fraîche est envoyée au service de vision configuré dans la page du plugin, qui range la scène dans une catégorie fermée. L'alerte n'est annulée que si le modèle est sûr d'avoir vu autre chose qu'une catégorie cochée ci-dessous, avec une confiance au moins égale au seuil. S'il doute, ou si le service est injoignable ou ne répond pas, les actions partent comme si l'option n'était pas cochée — jamais d'alarme muette à cause de l'IA.": "When the alert fires, the fresh capture is sent to the vision service set in the plugin page, which files the scene under a closed category. The alert is only cancelled if the model is sure it saw something other than a category ticked below, with a confidence at least equal to the threshold. If it is unsure, or if the service is unreachable or does not answer, the actions run as if the option were not ticked — never a silent alarm because of the AI.",
+        "Nécessite « Attendre la capture fraîche avant d'agir » : elle est cochée d'office si la règle n'a pas de délai de confirmation. Avec un délai de confirmation, cochez-la aussi, sinon la règle joue sans analyse.": "Requires « Wait for the fresh snapshot before acting »: it is ticked automatically if the rule has no confirmation delay. With a confirmation delay, tick it as well, otherwise the rule runs without analysis.",
         "Aucune clé API n'est renseignée dans la configuration du plugin : la confirmation IA est désactivée partout.": "No API key is set in the plugin configuration: AI confirmation is disabled everywhere.",
         "Catégories qui font jouer l'alerte": "Categories that let the alert run",
-        "Les actions ne partent que si la catégorie rendue par le modèle fait partie des cases cochées. Humain et Véhicule par défaut ; cocher Animal est utile pour une caméra de jardin où un gros chien du voisin suffit à prévenir.": "The actions only run if the category returned by the model is among the ticked boxes. Human and Vehicle by default; ticking Animal is handy for a garden camera where a neighbour's big dog is reason enough to warn.",
+        "Une catégorie cochée fait toujours jouer l'alerte ; une autre ne l'annule que si le modèle en est sûr. Humain et Véhicule par défaut ; cocher Animal est utile pour une caméra de jardin où un gros chien du voisin suffit à prévenir.": "A ticked category always lets the alert run; any other one only cancels it if the model is sure. Human and Vehicle by default; ticking Animal helps for a garden camera where the neighbour's big dog is reason enough to warn.",
         "Humain": "Human",
         "Véhicule": "Vehicle",
         "Animal": "Animal",
@@ -506,6 +506,8 @@
         "IA indisponible :": "AI unavailable:",
         "règle jouée sans analyse": "rule played without analysis",
         "IA confirme :": "AI confirms:",
+        "IA dans le doute :": "AI unsure:",
+        "règle jouée": "rule run",
         "écartée par l'IA :": "discarded by AI:"
     },
     "plugins/dahua/core/class/dahuaAlert.class.php": {

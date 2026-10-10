@@ -580,6 +580,102 @@ règle le signale.
 L'option est décochée par défaut, y compris sur les règles existantes, qui
 gardent leur comportement.
 
+#### Confirmation par analyse d'image
+
+Sur une caméra sans détection humain ni véhicule, un papillon de nuit qui vole
+devant l'objectif infrarouge suffit à cumuler mouvement et franchissement de
+ligne : la règle se déclenche pour rien. La confirmation par analyse d'image
+demande un deuxième avis avant que les actions ne partent. Les images de
+l'alerte sont envoyées à un modèle de vision, qui range la scène dans une
+catégorie : humain, véhicule, animal, insecte ou débris devant l'objectif,
+végétation ou ombre, scène vide, ou indéterminée (image inexploitable).
+
+**Elle est désactivée par défaut**, à deux niveaux. Pour s'en servir :
+
+1. Dans la configuration du plugin, section *Confirmation IA (optionnelle)*,
+   renseignez la **clé API** du service. Sans clé, la fonction est coupée sur
+   toutes les règles, et la page de chaque règle le signale.
+2. Dans chaque règle concernée, section *Confirmation par IA*, cochez
+   **Activer la confirmation IA**.
+
+Réglages du plugin :
+
+| Réglage | Rôle |
+|---|---|
+| Clé API | clé secrète du service. Vide, la fonction est coupée partout. |
+| Adresse du service | toute API compatible OpenAI, chemin de version compris. `https://api.openai.com/v1` par défaut ; `http://192.168.1.20:11434/v1` pour un Ollama sur le réseau local, par exemple. |
+| Modèle | un modèle qui sait lire des images. `gpt-5.4-nano` par défaut. |
+| Qualité d'image envoyée | Haute (par défaut et recommandée), Automatique ou Basse. En basse qualité, l'image est réduite à 512 pixels par le service : une silhouette au loin devient invisible. |
+| Délai maximal (s) | de 5 à 60 s, 12 par défaut. Passé ce délai sans réponse, la règle joue sans analyse. |
+| Contexte des lieux | facultatif, 500 caractères au plus. Une indication passée au modèle, par exemple « un chat du quartier passe souvent devant la caméra NORD ». |
+
+Réglages de la règle :
+
+- **Catégories qui font jouer l'alerte** : Humain et Véhicule par défaut.
+  Cocher Animal peut servir pour une caméra de jardin. « Indéterminé » n'est
+  pas proposé ;
+- **Confiance minimale** : de 0 à 100 %, 60 par défaut. C'est le seuil
+  au-dessus duquel le modèle peut **écarter** une alerte : en dessous, il doute,
+  et l'alerte joue.
+
+**Ce qui se passe à l'alerte.** L'analyse a lieu quand la capture fraîche de
+l'alerte est enregistrée. Il faut donc que *Attendre la capture fraîche avant
+d'agir* soit cochée. La page la coche d'office quand vous activez l'option sur
+une règle sans délai de confirmation ; avec un délai de confirmation, cochez-la
+vous-même. Il faut aussi que *Capturer une image fraîche à chaque alerte* soit
+cochée dans la configuration du plugin. Avec un délai de confirmation, l'analyse
+a lieu au terme du délai, si la condition d'armement est toujours remplie.
+
+- La catégorie rendue fait partie des cases cochées : les actions partent. Le
+  journal l'indique, par exemple « IA confirme : humain 92% — … ».
+- Le modèle doute — confiance sous le seuil, ou image jugée inexploitable
+  (« indéterminé ») : les actions partent aussi. Dans le doute, on prévient ; le
+  journal dit « IA dans le doute : … — règle jouée ».
+- Le modèle est **sûr** d'autre chose — une catégorie non cochée, avec une
+  confiance au moins égale au seuil : **rien ne part**. L'alerte est marquée
+  **annulée**, comme avec le délai de confirmation, avec la raison : « écartée
+  par l'IA : insecte_ou_debris 88% — … ». Le dossier d'alerte reste dans
+  l'historique, et la temporisation est rendue.
+- Les actions attendent la réponse du service. Comptez quelques secondes de plus
+  avant la notification, et au plus le délai maximal.
+
+**En cas d'échec, la règle joue normalement.** Service injoignable, pas de
+réponse dans le délai, clé refusée, quota atteint, réponse illisible, aucune
+image exploitable, pas de clé : les actions partent comme si l'option n'était
+pas cochée. Le journal l'indique (« IA indisponible : … — règle jouée sans
+analyse »). Une panne du service ne rend jamais l'alarme muette. Un incident
+passager (réseau, quota, erreur du serveur) est retenté une fois, s'il reste
+le temps.
+
+À savoir :
+
+- seules les **actions de la règle** sont filtrées. Sans délai de confirmation,
+  *Déclenchée* passe à 1 dès le déclenchement, avant l'analyse, puis retombe à 0
+  si l'alerte est écartée : un scénario déclenché sur *Déclenchée* n'est pas
+  filtré. Avec un délai de confirmation, *Déclenchée* ne passe à 1 qu'une fois
+  l'analyse favorable ;
+- le bouton *Tester* ne consulte pas le service : il joue les actions sans
+  analyse, et ne coûte rien ;
+- le verdict (catégorie, confiance, description, modèle, durée) est enregistré
+  dans le dossier de l'alerte.
+
+**Ce qui quitte votre réseau.** Avec un service en ligne, les images de vos
+caméras partent chez le fournisseur choisi. À chaque analyse sont envoyées les
+images du moment de la détection puis les captures fraîches de l'alerte, quatre
+au plus, telles que la caméra les a fournies (sans réduction par le plugin, au
+plus 2,5 Mo chacune), avec les consignes d'analyse et votre texte de contexte.
+Ce que le fournisseur fait ensuite des images dépend de ses conditions : OpenAI
+indique ne pas s'en servir pour entraîner ses modèles, mais les conserver
+jusqu'à trente jours. Les consignes demandent au modèle de n'identifier
+personne et de ne décrire ni l'âge, ni l'origine, ni le visage. Avec un modèle
+local compatible (Ollama, par exemple), les images restent chez vous.
+
+**Le coût.** Chaque analyse est facturée par le fournisseur, selon son tarif, sur
+le compte de la clé API. Il y a une analyse par alerte confirmée de cette façon,
+pas par détection. La page de configuration l'estime à une fraction de centime
+par alerte avec le petit modèle d'OpenAI ; la qualité Basse coûte moins cher,
+au prix de la précision. Un modèle local ne passe par aucun fournisseur.
+
 ### Commandes créées
 
 | Commande | Type | Rôle |

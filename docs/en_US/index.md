@@ -550,6 +550,98 @@ actions run immediately, as without the option. The rule page says so.
 The option is unticked by default, including on existing rules, which keep
 their behavior.
 
+#### Confirmation by image analysis
+
+On a camera without human or vehicle detection, a moth flying in front of the
+infrared lens is enough to combine motion and line crossing: the rule triggers
+for nothing. Confirmation by image analysis asks for a second opinion before
+the actions run. The alert's images are sent to a vision model, which puts the
+scene in a category: human, vehicle, animal, insect or debris in front of the
+lens, vegetation or shadow, empty scene, or undetermined (unusable image).
+
+**It is disabled by default**, at two levels. To use it:
+
+1. In the plugin configuration, section *AI confirmation (optional)*, enter the
+   service's **API key**. Without a key, the feature is off on every rule, and
+   each rule's page says so.
+2. In each rule concerned, section *AI confirmation*, tick **Enable AI
+   confirmation**.
+
+Plugin settings:
+
+| Setting | Role |
+|---|---|
+| API key | the service's secret key. Empty, the feature is off everywhere. |
+| Service URL | any OpenAI-compatible API, version path included. `https://api.openai.com/v1` by default; `http://192.168.1.20:11434/v1` for an Ollama on the local network, for instance. |
+| Model | a model that can read images. `gpt-5.4-nano` by default. |
+| Image quality sent | High (default and recommended), Automatic or Low. In low quality, the service shrinks the picture to 512 pixels: a distant silhouette becomes invisible. |
+| Maximum delay (s) | 5 to 60 s, 12 by default. Past this delay without an answer, the rule runs without analysis. |
+| Context of the premises | optional, 500 characters at most. A hint passed to the model, for instance "a neighbourhood cat often walks in front of the NORTH camera". |
+
+Rule settings:
+
+- **Categories that let the alert run**: Human and Vehicle by default. Ticking
+  Animal can help for a garden camera. "Undetermined" is not offered;
+- **Minimum confidence**: 0 to 100 %, 60 by default. It is the threshold above
+  which the model may **discard** an alert: below it, the model is unsure, and
+  the alert runs.
+
+**What happens on an alert.** The analysis takes place when the alert's fresh
+snapshot is saved. *Wait for the fresh snapshot before acting* must therefore be
+ticked. The page ticks it for you when you enable the option on a rule without a
+confirmation delay; with a confirmation delay, tick it yourself. *Take a fresh
+snapshot on every alert* must also be ticked in the plugin configuration. With a
+confirmation delay, the analysis takes place at the end of the delay, if the
+arming condition is still met.
+
+- The returned category is among the ticked boxes: the actions run. The log
+  says so, for instance "AI confirms: humain 92% — …".
+- The model is unsure — confidence below the threshold, or an image judged
+  unusable ("undetermined"): the actions run too. When in doubt, warn; the log
+  says "AI unsure: … — rule run".
+- The model is **sure** of something else — an unticked category, with a
+  confidence at least equal to the threshold: **nothing runs**. The alert is
+  marked **cancelled**, as with the confirmation delay, with the reason:
+  "discarded by AI: insecte_ou_debris 88% — …". The alert folder stays in the
+  history, and the cooldown is given back.
+- The actions wait for the service's answer. Expect a few more seconds before
+  the notification, and at most the maximum delay.
+
+**On failure, the rule runs normally.** Service unreachable, no answer within
+the delay, key refused, quota reached, unreadable answer, no usable image, no
+key: the actions run as if the option were not ticked. The log says so ("AI
+unavailable: … — rule played without analysis"). A service outage never
+silences the alarm. A transient incident (network, quota, server error) is
+retried once, if there is time left.
+
+Good to know:
+
+- only the **rule's actions** are filtered. Without a confirmation delay,
+  *Triggered* goes to 1 at trigger time, before the analysis, then falls back
+  to 0 if the alert is discarded: a scenario triggered on *Triggered* is not
+  filtered. With a confirmation delay, *Triggered* goes to 1 only once the
+  analysis is favourable;
+- the *Test* button does not call the service: it runs the actions without
+  analysis, and costs nothing;
+- the verdict (category, confidence, description, model, duration) is saved in
+  the alert folder.
+
+**What leaves your network.** With an online service, your camera images go to
+the provider you chose. Each analysis sends the images from detection time,
+then the alert's fresh snapshots, four at most, as the camera supplied them
+(not shrunk by the plugin, 2.5 MB each at most), along with the analysis
+instructions and your context text. What the provider then does with the
+images depends on its terms: OpenAI states that it does not use them to train
+its models, but keeps them for up to thirty days. The instructions ask the
+model to identify no one and to describe neither age, origin nor face. With a
+compatible local model (Ollama, for instance), the images stay at home.
+
+**Cost.** Each analysis is billed by the provider, at its rates, to the account
+of the API key. There is one analysis per alert confirmed this way, not per
+detection. The configuration page puts it at a fraction of a cent per alert
+with OpenAI's small model; Low quality costs less, at the expense of accuracy.
+A local model goes through no provider.
+
 ### Commands created
 
 | Command | Type | Purpose |

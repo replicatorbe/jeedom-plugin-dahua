@@ -1084,12 +1084,23 @@ class dahuaRule {
         $categorie = (string) $result['categorie'];
         $confiance = (int) $result['confiance'];
 
-        $accepte = in_array($categorie, $classes, true) && $confiance >= $minConf;
+        /* Seul un verdict SÛR d'autre chose écarte l'alerte. Un « indetermine »,
+         * ou une confiance sous le seuil, c'est le modèle qui doute : dans le
+         * doute, on joue (voir AI_DEFAULT_MIN_CONFIDENCE). Une alarme qui se tait
+         * sur un humain reconnu à 40 % est pire qu'un faux positif. */
+        $doute = ($categorie === 'indetermine') || $confiance < $minConf;
+        $accepte = in_array($categorie, $classes, true) || $doute;
         $libelle = $categorie . ' ' . $confiance . '%';
         if ($result['description'] !== '') {
             $libelle .= ' — ' . mb_substr($result['description'], 0, 120);
         }
 
+        if ($accepte && $doute && !in_array($categorie, $classes, true)) {
+            log::add('dahua', 'info', $_rule->getHumanName() . ' — '
+                   . __('IA dans le doute :', __FILE__) . ' ' . $libelle . ' — '
+                   . __('règle jouée', __FILE__));
+            return '';
+        }
         if ($accepte) {
             log::add('dahua', 'info', $_rule->getHumanName() . ' — '
                    . __('IA confirme :', __FILE__) . ' ' . $libelle);
