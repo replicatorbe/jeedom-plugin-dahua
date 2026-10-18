@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.1 — 18/10/2026
+
+**Moins d'écritures pour la joignabilité des caméras**
+
+- **Connectée** n'enregistre plus une ligne d'historique à chaque sonde quand
+  rien ne change : environ 500 lignes par caméra et par jour pour répéter la
+  même valeur. Seule une bascule est historisée, avec sa date ; entre deux, le
+  coeur rafraîchit simplement la dernière communication de l'équipement.
+
 ## 0.10 — 10/10/2026
 
 **Confirmer les alertes par analyse d'image**

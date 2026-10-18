@@ -343,9 +343,21 @@ function handleDahuaEvent($_event) {
              */
             $before = (string) $cmd->execCmd();
             $value  = ((int) $up == 1) ? 1 : 0;
-            $cam->checkAndUpdateCmd('online', $value, $date);
+            /*
+             * La date n'est passée qu'au changement. Avec elle, le coeur rejoue
+             * un événement à valeur inchangée dès qu'elle est plus récente que
+             * collectDate — une ligne d'historique par caméra et par sonde, soit
+             * des milliers par jour pour ne rien dire. Sans elle, il se contente
+             * de rafraîchir collectDate et lastCommunication en cache : le signe
+             * de vie reste, l'écriture disparaît. Rien dans le plugin ne lit la
+             * collectDate de 'online' ; la tuile lit valueDate, qui ne bouge
+             * qu'au changement.
+             */
             if ((string) $value !== $before) {
+                $cam->checkAndUpdateCmd('online', $value, $date);
                 $changed = true;
+            } else {
+                $cam->checkAndUpdateCmd('online', $value);
             }
             if ($before === '') {
                 continue;                             // première observation : pas une bascule
