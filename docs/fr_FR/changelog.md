@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2 — 20/10/2026
+
+- Le point d'entrée appelé par le démon n'accepte plus que la clé API du
+  plugin : la clé personnelle d'un utilisateur Jeedom y donnait aussi accès.
+
 ## 0.10.1 — 18/10/2026
 
 **Moins d'écritures pour la joignabilité des caméras**

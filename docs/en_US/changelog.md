@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2 — 2026-10-20
+
+- The endpoint called by the daemon now only accepts the plugin's API key:
+  a Jeedom user's personal key used to be accepted as well.
+
 ## 0.10 — 2026-10-10
 
 **Confirming alerts by image analysis**
