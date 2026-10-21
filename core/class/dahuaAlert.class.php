@@ -1701,6 +1701,11 @@ class dahuaAlert {
          * un dossier sans images mais encore descriptible, que la purge suivante
          * reprendra proprement. L'ordre inverse laisserait des images qu'aucune
          * description ne réclame plus. */
+        /* Reste d'une écriture d'image interrompue par la mort du démon : sans
+         * ce ménage, rmdir() échouerait sur un dossier qu'il croit vide. */
+        foreach (glob($_dir . '/cam*.jpg.*.tmp') ?: array() as $file) {
+            @unlink($file);
+        }
         foreach (array('meta.json', 'meta.json.tmp', '.lock') as $name) {
             @unlink($_dir . '/' . $name);
         }

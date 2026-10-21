@@ -156,18 +156,66 @@ class dahua extends eqLogic {
         return false;
     }
 
+    /*
+     * Arrêt propre : SIGTERM, puis jusqu'à dix secondes pour que le démon ferme
+     * ses connexions aux NVR et son port d'ordres, puis kill -9 s'il traîne.
+     * system::kill() enchaînait SIGTERM et kill -9 sans attendre, et
+     * deamon_start() relançait aussitôt : le nouveau démon trouvait le port
+     * encore pris (« écoute impossible sur le port 55060 : Address already in
+     * use »). On ne rend donc la main qu'une fois le port libre.
+     */
     public static function deamon_stop() {
         $pid_file = jeedom::getTmpFolder(__CLASS__) . '/deamon.pid';
         if (file_exists($pid_file)) {
-            $pid = intval(trim(file_get_contents($pid_file)));
-            if ($pid > 0) {
-                system::kill($pid);
+            $pid = (int) trim(file_get_contents($pid_file));
+            if ($pid > 0 && self::isDaemonPid($pid)) {
+                posix_kill($pid, 15);
+                for ($i = 0; $i < 40 && self::isDaemonPid($pid); $i++) {
+                    usleep(250000);
+                }
+                if (self::isDaemonPid($pid)) {
+                    posix_kill($pid, 9);
+                }
             }
             @unlink($pid_file);
         }
-        // Filet de sécurité si le fichier PID a disparu alors que le process tourne.
-        system::kill('resources/dahuad/dahuad.php');
-        system::fuserk(config::byKey('socketport', __CLASS__, 55060));
+        /* Filet de sécurité si le fichier PID a disparu alors que le process
+         * tourne — et pour les fils de capture ou d'envoi encore en vol, qui
+         * portent la même ligne de commande. */
+        if (count(system::ps('resources/dahuad/dahuad.php')) > 0) {
+            system::kill('resources/dahuad/dahuad.php', false);
+            for ($i = 0; $i < 20 && count(system::ps('resources/dahuad/dahuad.php')) > 0; $i++) {
+                usleep(250000);
+            }
+            if (count(system::ps('resources/dahuad/dahuad.php')) > 0) {
+                system::kill('resources/dahuad/dahuad.php');
+            }
+        }
+        $port = (int) config::byKey('socketport', __CLASS__, 55060);
+        system::fuserk((string) $port);
+        self::waitPortFree($port);
+    }
+
+    /* Le PID est-il toujours notre démon ? Après un kill -9, il a pu être réattribué à un autre processus. */
+    private static function isDaemonPid($_pid) {
+        $cmdline = @file_get_contents('/proc/' . (int) $_pid . '/cmdline');
+        return $cmdline !== false && strpos($cmdline, 'dahuad.php') !== false;
+    }
+
+    /* Attend jusqu'à dix secondes que le port d'ordres se lie de nouveau, comme
+     * le démon le liera : le noyau peut le garder un instant après la mort du
+     * process. */
+    private static function waitPortFree($_port) {
+        for ($i = 0; $i < 40; $i++) {
+            $probe = @stream_socket_server('tcp://127.0.0.1:' . (int) $_port, $errno, $errstr);
+            if ($probe !== false) {
+                fclose($probe);
+                return true;
+            }
+            usleep(250000);
+        }
+        log::add(__CLASS__, 'warning', __('Port du démon toujours occupé après l\'arrêt :', __FILE__) . ' ' . (int) $_port);
+        return false;
     }
 
     public static function getCallbackUrl() {
@@ -1359,7 +1407,7 @@ class dahua extends eqLogic {
         // gmdate des deux côtés : le démon tourne en UTC, le tri par nom doit rester
         // cohérent quel que soit le fuseau du process qui a écrit le fichier.
         $file = 'cam' . $this->getId() . '_' . gmdate('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
-        if (file_put_contents($dir . '/' . $file, $image) === false) {
+        if (!self::writeFileAtomic($dir . '/' . $file, $image)) {
             throw new Exception(__('Écriture de la capture impossible dans', __FILE__) . ' ' . $dir);
         }
         $this->purgeSnapshots($dir);
@@ -1420,9 +1468,11 @@ class dahua extends eqLogic {
                 }
             }
             $file = 'cam' . $this->getId() . '_' . gmdate('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
-            $written = imagejpeg($img, $dir . '/' . $file, 85);
+            ob_start();
+            $written = imagejpeg($img, null, 85);
+            $jpeg = ob_get_clean();
             imagedestroy($img);
-            if (!$written) {
+            if (!$written || !self::writeFileAtomic($dir . '/' . $file, $jpeg)) {
                 log::add(__CLASS__, 'warning', $this->getHumanName() . ' '
                        . __('écriture de l\'image « indisponible » impossible dans', __FILE__) . ' ' . $dir);
                 return;
@@ -1465,6 +1515,25 @@ class dahua extends eqLogic {
         }
         $key = config::byKey('image_key', __CLASS__, '');
         return is_string($password) && $key != '' && hash_equals($key, $password);
+    }
+
+    /*
+     * Écriture atomique : fichier temporaire dans le même dossier, puis rename.
+     * La tuile, snapshot.php ou une notification qui lit « Fichier de l'image »
+     * ne voient ainsi jamais un JPEG à moitié écrit. Le nom temporaire finit en
+     * .tmp : il échappe aux motifs cam<id>_*.jpg de la purge et des lectures.
+     */
+    public static function writeFileAtomic($_path, $_data) {
+        $tmp = $_path . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, $_data) !== strlen($_data)) {
+            @unlink($tmp);
+            return false;
+        }
+        if (!@rename($tmp, $_path)) {
+            @unlink($tmp);
+            return false;
+        }
+        return true;
     }
 
     public static function snapshotDir() {

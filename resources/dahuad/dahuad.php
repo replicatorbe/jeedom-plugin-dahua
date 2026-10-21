@@ -1589,12 +1589,32 @@ class DahuaDaemon {
         // gmdate des deux côtés : la purge trie par nom, le tri doit être
         // cohérent quel que soit le fuseau du process qui a écrit le fichier.
         $file = 'cam' . $_cameraId . '_' . gmdate('Ymd-His') . '_' . bin2hex(random_bytes(4)) . '.jpg';
-        if (@file_put_contents($dir . '/' . $file, $image) === false) {
+        if (!$this->writeFileAtomic($dir . '/' . $file, $image)) {
             DahuaLog::error('écriture de la capture impossible dans ' . $dir);
             return false;
         }
         $this->purgeSnapshots($dir, $_cameraId);
         return 'plugins/dahua/core/php/snapshot.php?file=' . rawurlencode($file);
+    }
+
+    /*
+     * Écriture atomique : fichier temporaire dans le même dossier, puis rename.
+     * Jeedom sert ces images pendant qu'on les écrit — tuile, snapshot.php,
+     * analyse d'image — et ne doit jamais lire un JPEG tronqué. Le nom
+     * temporaire finit en .tmp, hors des motifs cam<id>_*.jpg de la purge, des
+     * lectures et de snapshot.php.
+     */
+    private function writeFileAtomic($_path, $_data) {
+        $tmp = $_path . '.' . getmypid() . '.tmp';
+        if (@file_put_contents($tmp, $_data) !== strlen($_data)) {
+            @unlink($tmp);
+            return false;
+        }
+        if (!@rename($tmp, $_path)) {
+            @unlink($tmp);
+            return false;
+        }
+        return true;
     }
 
     private function purgeSnapshots($_dir, $_cameraId) {
@@ -1657,7 +1677,7 @@ class DahuaDaemon {
          * pour rien, et invisible.
          */
         $file = $_alertDir . '/cam' . $_cameraId . '_live.jpg';
-        if (@file_put_contents($file, $image) === false) {
+        if (!$this->writeFileAtomic($file, $image)) {
             DahuaLog::error('écriture de la capture d\'alerte impossible dans ' . $_alertDir);
             return 'écriture impossible';
         }
@@ -1675,8 +1695,13 @@ class DahuaDaemon {
                 $thumb = @imagescale($source, 320);
                 imagedestroy($source);
                 if ($thumb !== false) {
-                    @imagejpeg($thumb, $_alertDir . '/cam' . $_cameraId . '_live_t.jpg', 80);
+                    ob_start();
+                    $written = @imagejpeg($thumb, null, 80);
+                    $jpeg = ob_get_clean();
                     imagedestroy($thumb);
+                    if ($written) {
+                        $this->writeFileAtomic($_alertDir . '/cam' . $_cameraId . '_live_t.jpg', $jpeg);
+                    }
                 } else {
                     DahuaLog::warning('vignette d\'alerte impossible sur le canal ' . $_channel);
                 }
