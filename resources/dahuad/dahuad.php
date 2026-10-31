@@ -811,6 +811,11 @@ class DahuaDaemon {
 
     const PUSH_TIMEOUT  = 4;         // un Jeedom lent ne doit jamais geler la boucle
     const PUSH_ATTEMPTS = 2;
+    /* Les lots d'événements partent d'un fils (drainPushQueue) : attendre plus
+     * longtemps ne gèle rien. Au redémarrage nocturne du NVR, Jeedom met plus
+     * de 4 s à répondre et des lots étaient perdus après deux essais. */
+    const PUSH_EVENTS_TIMEOUT  = 15;
+    const PUSH_EVENTS_ATTEMPTS = 3;
     const PUSH_QUEUE_MAX = 500;
 
     const SNAPSHOT_TIMEOUT = 15;
@@ -877,13 +882,15 @@ class DahuaDaemon {
 
     private function callback($_query = '', $_body = null) {
         $url = $this->opt['callback'] . '?apikey=' . urlencode($this->opt['apikey']) . $_query;
+        $timeout = ($_body !== null) ? self::PUSH_EVENTS_TIMEOUT : self::PUSH_TIMEOUT;
+        $attempts = ($_body !== null) ? self::PUSH_EVENTS_ATTEMPTS : self::PUSH_ATTEMPTS;
 
-        for ($i = 0; $i < self::PUSH_ATTEMPTS; $i++) {
+        for ($i = 0; $i < $attempts; $i++) {
             $ch = curl_init($url);
             $options = array(
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_CONNECTTIMEOUT => 2,
-                CURLOPT_TIMEOUT        => self::PUSH_TIMEOUT,
+                CURLOPT_TIMEOUT        => $timeout,
                 CURLOPT_SSL_VERIFYPEER => false,
                 CURLOPT_SSL_VERIFYHOST => false,
             );
@@ -911,10 +918,10 @@ class DahuaDaemon {
                 }
                 DahuaLog::error('lot refusé par Jeedom : '
                               . substr(trim((string) $response), 0, 200)
-                              . ' — tentative ' . ($i + 1) . '/' . self::PUSH_ATTEMPTS);
+                              . ' — tentative ' . ($i + 1) . '/' . $attempts);
             } else {
                 DahuaLog::error('callback en échec (HTTP ' . $code . ($error != '' ? ' / ' . $error : '')
-                              . ') tentative ' . ($i + 1) . '/' . self::PUSH_ATTEMPTS);
+                              . ') tentative ' . ($i + 1) . '/' . $attempts);
             }
         }
         return false;

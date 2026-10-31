@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.4 — 31/10/2026
+
+- Les lots d'événements envoyés à Jeedom attendent jusqu'à 15 s (au lieu de
+  4 s) et sont réessayés trois fois : au redémarrage nocturne du NVR, Jeedom
+  répondait trop lentement et des événements étaient perdus après deux essais.
+  La lecture de la configuration, faite par le démon lui-même, garde 4 s.
+
 ## 0.10.3 — 21/10/2026
 
 - Arrêt propre du démon : il reçoit SIGTERM et dispose de dix secondes pour
