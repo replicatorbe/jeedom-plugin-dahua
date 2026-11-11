@@ -109,6 +109,7 @@
         "sans équipement : lancez la découverte des caméras": "has no device: run the camera discovery",
         "Retour des règles en échec :": "Rule release failed:",
         "hors ligne": "offline",
+        "sonde négative, perte à confirmer à la prochaine sonde": "negative probe, loss to be confirmed by the next probe",
         "de nouveau en ligne": "back online",
         "en ligne": "online",
         "Rattrapage d'image d'alerte en échec :": "Alert image back-fill failed:",

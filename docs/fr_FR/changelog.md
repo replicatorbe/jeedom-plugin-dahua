@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.5 — 11/11/2026
+
+- Une caméra n'est déclarée **hors ligne** qu'après deux vérifications
+  négatives consécutives : SUDPTZ décrochait quelques secondes plusieurs fois
+  par jour et déclenchait chaque fois les actions « Caméra perdue » pour une
+  minute d'absence. La perte est signalée une période de vérification plus tard
+  (60 s par défaut) ; le retour en ligne reste immédiat.
+- Plus de bascule DHIP ↔ CGI quand le NVR est injoignable (pas de route,
+  refus, délai) : la bascule ne sert que lorsqu'un transport est refusé alors
+  que l'autre répond. Lors d'une coupure réseau, le démon alternait les deux
+  transports à chaque essai et triplait les lignes du journal.
+- Une coupure du NVR ne laisse plus qu'une erreur, et seulement si elle dure
+  plus de 3 minutes ; les essais suivants passent en avertissement. Le
+  redémarrage nocturne du NVR (moins d'une minute) n'apparaît plus en erreur.
+
 ## 0.10.4 — 31/10/2026
 
 - Les lots d'événements envoyés à Jeedom attendent jusqu'à 15 s (au lieu de

@@ -21,6 +21,7 @@ require_once __DIR__ . '/../../../../core/php/core.inc.php';
 require_once __DIR__ . '/dahuaRule.class.php';
 require_once __DIR__ . '/dahuaAlert.class.php';
 require_once __DIR__ . '/dahuaVision.class.php';
+require_once __DIR__ . '/dahuaProbe.class.php';
 
 class dahua extends eqLogic {
 

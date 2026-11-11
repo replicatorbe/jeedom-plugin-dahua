@@ -348,6 +348,21 @@ function handleDahuaEvent($_event) {
             $before = (string) $cmd->execCmd();
             $value  = ((int) $up == 1) ? 1 : 0;
             /*
+             * Une caméra en ligne n'est déclarée perdue qu'à la deuxième sonde
+             * négative consécutive (voir dahuaProbe) : une seule sonde tombée sur
+             * un décrochage de quelques secondes notifiait « hors ligne » pour
+             * rien. Rien n'est écrit en attendant : la caméra reste à 1. Une
+             * caméra déjà à 0, ou jamais observée, n'a rien à confirmer.
+             */
+            if ($before === '1' || $value === 1) {
+                $confirmed = dahuaProbe::lossConfirmed($cam->getId(), $value === 1);
+                if ($value === 0 && !$confirmed) {
+                    log::add('dahua', 'debug', $cam->getHumanName() . ' '
+                           . __('sonde négative, perte à confirmer à la prochaine sonde', __FILE__));
+                    continue;
+                }
+            }
+            /*
              * La date n'est passée qu'au changement. Avec elle, le coeur rejoue
              * un événement à valeur inchangée dès qu'elle est plus récente que
              * collectDate — une ligne d'historique par caméra et par sonde, soit

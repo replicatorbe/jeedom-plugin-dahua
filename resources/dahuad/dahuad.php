@@ -12,7 +12,7 @@
  *   - CGI  : long-polling HTTP multipart, plus tolérant aux firmwares récents et
  *            détectant une coupure en ~15 s grâce au heartbeat.
  * En mode « auto », DHIP est tenté en premier et le démon bascule sur CGI après
- * deux échecs consécutifs.
+ * deux échecs consécutifs — sauf si l'hôte entier est injoignable.
  *
  * This file is part of Jeedom. Licensed under GNU GPL v3 or later.
  */
@@ -93,6 +93,18 @@ abstract class DahuaTransport {
 
     const MAX_BUFFER = 4194304;      // 4 Mo : au-delà, le flux est corrompu
 
+    /*
+     * Une panne plus courte que ce délai ne se journalise pas en erreur. Le NVR
+     * redémarre chaque nuit vers 02:00 et revient en moins d'une minute : sans
+     * cette marge, chaque nuit laissait une erreur « Connection refused » pour un
+     * événement parfaitement normal, et une vraie panne s'y noyait.
+     */
+    const OUTAGE_GRACE = 180;
+
+    /* Délai de la sonde TCP qui décide d'une bascule : un hôte vivant répond en
+     * quelques millisecondes, il est inutile de bloquer la boucle plus longtemps. */
+    const SWITCH_PROBE_TIMEOUT = 2;
+
     public $config;
     public $socket = null;
     public $state = 'disconnected';
@@ -102,6 +114,8 @@ abstract class DahuaTransport {
     private $nextRetry = 0;
     private $failures = 0;
     private $connectFailures = 0;
+    private $outageSince = 0;        // début de la panne en cours, 0 si aucune
+    private $outageReported = false; // panne déjà signalée en erreur
 
     public function __construct($_config) {
         $this->config = $_config;
@@ -143,6 +157,8 @@ abstract class DahuaTransport {
             $this->failures = 0;
             $this->connectFailures = 0;
             $this->nextRetry = time();
+            $this->outageSince = 0;
+            $this->outageReported = false;
             return;
         }
         $this->failures++;
@@ -174,6 +190,75 @@ abstract class DahuaTransport {
     public function adoptBackoff($_previous) {
         $this->failures = $_previous->failureCount();
         $this->nextRetry = time();
+        // La panne continue : changer de transport ne la fait pas recommencer.
+        list($this->outageSince, $this->outageReported) = $_previous->outageState();
+    }
+
+    public function outageState() {
+        return array($this->outageSince, $this->outageReported);
+    }
+
+    /* Retient le début de la panne : déconnexion, ou premier essai raté. */
+    public function noteOutage() {
+        if ($this->outageSince == 0) {
+            $this->outageSince = time();
+        }
+    }
+
+    public function outageDuration() {
+        return ($this->outageSince > 0) ? time() - $this->outageSince : 0;
+    }
+
+    /*
+     * Niveau de journal d'un essai de connexion raté. Une seule erreur par panne,
+     * et seulement si elle dure : les essais d'une panne courte (redémarrage du
+     * NVR) restent des avertissements, et ceux qui suivent l'erreur, qui peuvent
+     * durer toute une nuit, ne font que la confirmer.
+     */
+    public function failureLogLevel() {
+        $this->noteOutage();
+        if ($this->outageReported || $this->outageDuration() < self::OUTAGE_GRACE) {
+            return 'warning';
+        }
+        $this->outageReported = true;
+        return 'error';
+    }
+
+    protected function httpPort() {
+        return isset($this->config['http_port']) && (int) $this->config['http_port'] > 0
+             ? (int) $this->config['http_port']
+             : 80;
+    }
+
+    /* Port qu'utiliserait l'autre transport. */
+    abstract public function alternatePort();
+
+    /*
+     * La bascule de transport existe pour les NVR qui refusent l'un des deux
+     * protocoles tout en servant l'autre : authentification DHIP rejetée par
+     * certains firmwares, réponse HTTP inattendue, port DHIP fermé. Elle n'a
+     * aucun sens quand c'est l'hôte entier qui est injoignable : le 2026-11-05,
+     * une coupure réseau a fait alterner DHIP et CGI à chaque essai pendant des
+     * heures, en ajoutant une ligne de bascule à chaque erreur.
+     *
+     * Un échec au-delà de la connexion TCP (authentification, protocole,
+     * réponse) dit que le transport ne convient pas : on bascule. Un échec TCP
+     * (refus, pas de route, délai) est ambigu — port de ce transport fermé, ou
+     * hôte absent : on frappe au port de l'autre transport, et on ne bascule que
+     * s'il répond.
+     */
+    public function switchWorthwhile($_error) {
+        if (strpos($_error, 'connexion TCP impossible') !== 0) {
+            return true;
+        }
+        $errno = 0; $errstr = '';
+        $socket = @stream_socket_client('tcp://' . $this->config['ip'] . ':' . $this->alternatePort(),
+                                        $errno, $errstr, self::SWITCH_PROBE_TIMEOUT);
+        if ($socket === false) {
+            return false;
+        }
+        @fclose($socket);
+        return true;
     }
 
     /* Ajoute au buffer en le bornant : un flux corrompu ne doit pas remplir la RAM. */
@@ -233,6 +318,10 @@ class DahuaDhipTransport extends DahuaTransport {
 
     public function label() {
         return 'DHIP';
+    }
+
+    public function alternatePort() {
+        return $this->httpPort();
     }
 
     /* ----------------------------------------------------------- bas niveau */
@@ -577,10 +666,8 @@ class DahuaCgiTransport extends DahuaTransport {
         return 'CGI';
     }
 
-    private function httpPort() {
-        return isset($this->config['http_port']) && (int) $this->config['http_port'] > 0
-             ? (int) $this->config['http_port']
-             : 80;
+    public function alternatePort() {
+        return (int) $this->config['port'];
     }
 
     public function connect() {
@@ -1270,17 +1357,23 @@ class DahuaDaemon {
             $first = ($client->failureCount() == 0);
             $connectFailures = $client->noteConnectFailure();
             $delay = $client->scheduleRetry(max(5, (int) $this->config['reconnect_delay']));
-            DahuaLog::error($client->name() . ' ' . $error . ' — nouvel essai dans ' . $delay . 's');
+            $message = $client->name() . ' ' . $error . ' — nouvel essai dans ' . $delay . 's';
+            if ($client->failureLogLevel() == 'error') {
+                DahuaLog::error($message . ' (injoignable depuis '
+                              . round($client->outageDuration() / 60) . ' min)');
+            } else {
+                DahuaLog::warning($message);
+            }
 
             /*
              * Bascule automatique de transport : certains firmwares récents refusent
              * l'authentification DHIP tout en acceptant parfaitement le long-polling.
              * Elle joue dans les deux sens — un repli à sens unique condamnait le NVR
              * au CGI jusqu'au prochain redémarrage du démon, même une fois son DHIP
-             * revenu.
+             * revenu. Jamais sur un hôte injoignable : voir switchWorthwhile().
              */
             $mode = isset($client->config['transport']) ? $client->config['transport'] : 'auto';
-            if ($mode == 'auto' && $connectFailures >= 2) {
+            if ($mode == 'auto' && $connectFailures >= 2 && $client->switchWorthwhile($error)) {
                 $other = ($client->label() == 'DHIP') ? 'CGI' : 'DHIP';
                 DahuaLog::warning($client->name() . ' ' . $client->label()
                                 . ' en échec, bascule sur le transport ' . $other);
@@ -1322,6 +1415,7 @@ class DahuaDaemon {
     private function dropClient($_client, $_reason) {
         DahuaLog::warning($_client->name() . ' ' . $_reason);
         $_client->disconnect();
+        $_client->noteOutage();
         $_client->scheduleRetry(max(5, (int) $this->config['reconnect_delay']));
         $this->push(array(array(
             'nvr_id' => $_client->id(),
